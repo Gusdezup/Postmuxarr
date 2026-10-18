@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Postmuxarr</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --ink:#101528; --panel:#171e36; --raise:#1f2846; --line:#2b3558;
+  --text:#e7e9f3; --muted:#8d95b8; --lamp:#f3b443; --lamp-dim:#f3b44326;
+  --ok:#67c99a; --bad:#ec6b6b;
+  --sans:"Instrument Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"JetBrains Mono",ui-monospace,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--text);font:15px/1.5 var(--sans)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--lamp);outline-offset:2px}
+header{display:flex;align-items:center;gap:1rem;padding:1.1rem 1.5rem;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header h1{margin:0;font-size:1.25rem;font-weight:700;letter-spacing:-.01em}
+header .free{color:var(--muted);font-size:.9rem;margin-left:auto}
+.tabs{display:flex;gap:.3rem}
+.tabs button{background:none;border:1px solid transparent;border-radius:7px;padding:.25rem .75rem;color:var(--muted);cursor:pointer}
+.tabs button:hover{color:var(--text)}
+.tabs button.on{color:var(--text);border-color:var(--line);background:var(--raise)}
+.layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:1.5rem;padding:1.5rem;align-items:start}
+@media (max-width:1000px){.layout{grid-template-columns:1fr}}
+main{display:flex;flex-direction:column;gap:1.25rem;min-width:0}
+main[hidden]{display:none}
+section.step{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1.1rem 1.25rem}
+section.step[hidden]{display:none}
+.step h2{margin:0 0 .8rem;font-size:1.02rem;font-weight:600;display:flex;gap:.6rem;align-items:baseline}
+.step h2 .n{color:var(--lamp);font-variant-numeric:tabular-nums}
+.step h2 .sub{color:var(--muted);font-weight:400;font-size:.9rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.muted{color:var(--muted)}
+.row{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}
+.btn{background:var(--raise);border:1px solid var(--line);border-radius:7px;padding:.42rem .8rem;cursor:pointer}
+.btn:hover{border-color:var(--muted)}
+a.btn{color:inherit;text-decoration:none;display:inline-block}
+.btn.primary{background:var(--lamp);color:#1a1405;border-color:var(--lamp);font-weight:600}
+.btn.primary:hover{filter:brightness(1.07)}
+.btn.small{padding:.18rem .5rem;font-size:.85rem}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.danger{color:var(--bad);border-color:#ec6b6b66}
+.btn.danger:hover{border-color:var(--bad)}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;font-weight:500;color:var(--muted);font-size:.85rem;padding:.35rem .5rem;border-bottom:1px solid var(--line)}
+td{padding:.4rem .5rem;border-bottom:1px solid #222b4a;vertical-align:middle}
+tr:last-child td{border-bottom:0}
+.scroll{overflow-x:auto}
+.list{max-height:340px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+.entry{display:flex;gap:.7rem;align-items:center;padding:.45rem .7rem;cursor:pointer;border-bottom:1px solid #222b4a}
+.entry:last-child{border-bottom:0}
+.entry:hover{background:var(--raise)}
+.tag{font-size:.75rem;border:1px solid var(--line);border-radius:5px;padding:0 .4rem;color:var(--muted);flex:none}
+.tag.bd{color:var(--lamp);border-color:#f3b44366}
+.path{font-size:.88rem;color:var(--muted);word-break:break-all;margin:.2rem 0 .6rem}
+input[type=text],select{background:var(--ink);border:1px solid var(--line);border-radius:6px;padding:.3rem .45rem;min-width:0}
+input[type=text]{width:100%}
+input.edited,select.edited{border-color:#f3b44399}
+input[type=checkbox],input[type=radio]{accent-color:var(--lamp);width:1rem;height:1rem}
+tr.off td:not(:first-child){opacity:.38}
+.codec b{font-weight:600}
+.codec small{display:block;color:var(--muted)}
+.order{display:flex;flex-direction:column;gap:2px}
+.order button{background:none;border:1px solid var(--line);border-radius:4px;cursor:pointer;line-height:1;padding:0 .3rem;color:var(--muted)}
+.dup{color:var(--muted);font-size:.85rem}
+
+/* nom de release : l'élément fort */
+.release{font-family:var(--mono);font-size:clamp(1rem,1.9vw,1.35rem);line-height:1.45;word-break:break-all;
+  padding:1rem 1.1rem;border-radius:8px;background:var(--ink);border:1px solid var(--line);margin-bottom:1rem}
+.release span{border-bottom:2px solid transparent;padding-bottom:1px}
+.release span.auto{border-bottom-color:#8d95b855}
+.release span.man{border-bottom-color:var(--lamp);color:#ffe2a6}
+.release .sep{color:var(--muted)}
+.fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:.7rem}
+.fields label{display:flex;flex-direction:column;gap:.2rem;font-size:.85rem;color:var(--muted)}
+.fields label .lab{display:flex;justify-content:space-between}
+.fields .reset{background:none;border:0;color:var(--lamp);cursor:pointer;padding:0;font-size:.8rem}
+.fields label.wide{grid-column:span 2}
+.fields label.full{grid-column:1/-1}
+.legend{font-size:.85rem;color:var(--muted);margin-top:.7rem}
+.legend i{font-style:normal;border-bottom:2px solid var(--lamp)}
+.legend u{text-decoration:none;border-bottom:2px solid #8d95b855}
+
+.opts{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:.5rem 1rem;margin-bottom:1rem}
+.opts label{display:flex;gap:.5rem;align-items:center}
+.opts label[hidden]{display:none}
+.opts label.full{grid-column:1/-1}
+.opts label.full input{flex:1}
+pre.cmd{font-family:var(--mono);font-size:.82rem;background:var(--ink);border:1px solid var(--line);border-radius:8px;
+  padding:.8rem;white-space:pre-wrap;word-break:break-all;margin:.8rem 0 0;max-height:260px;overflow:auto}
+.warn{color:var(--lamp)}
+.error{color:var(--bad)}
+
+/* jobs */
+aside{position:sticky;top:1rem;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.1rem;max-height:calc(100vh - 2rem);overflow:auto}
+aside h2{margin:0 0 .3rem;font-size:1.02rem;font-weight:600}
+aside .hint{font-size:.85rem;color:var(--muted);margin:0 0 .8rem}
+.job{border-top:1px solid var(--line);padding:.75rem 0}
+.job .jn{font-family:var(--mono);font-size:.8rem;word-break:break-all}
+.job .st{display:flex;justify-content:space-between;font-size:.85rem;margin:.35rem 0}
+.bar{height:6px;background:var(--ink);border-radius:3px;overflow:hidden}
+.bar i{display:block;height:100%;background:var(--lamp);transition:width .6s}
+.job.done .bar i{background:var(--ok)} .job.failed .bar i{background:var(--bad)}
+.s-running{color:var(--lamp)} .s-done{color:var(--ok)} .s-warning{color:var(--lamp)}
+.s-failed,.s-interrupted{color:var(--bad)} .s-queued,.s-cancelled{color:var(--muted)}
+.job .acts{display:flex;gap:.4rem;margin-top:.5rem;flex-wrap:wrap}
+.job pre{font-family:var(--mono);font-size:.75rem;white-space:pre-wrap;word-break:break-all;background:var(--ink);
+  border-radius:6px;padding:.6rem;max-height:220px;overflow:auto;margin:.5rem 0 0}
+#toast{position:fixed;bottom:1.2rem;left:50%;transform:translateX(-50%);background:var(--raise);border:1px solid var(--line);
+  padding:.6rem 1rem;border-radius:8px;opacity:0;pointer-events:none;transition:opacity .25s;max-width:90vw}
+#toast.on{opacity:1} #toast.err{border-color:var(--bad)}
+.actions{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center;margin:.2rem 0 .6rem}
+.box{border:1px solid var(--line);border-radius:8px;padding:.8rem 1rem;margin:0 0 1rem}
+.box h3{margin:0 0 .6rem;font-size:.95rem;font-weight:600}
+.box .row label{display:flex;gap:.4rem;align-items:center}
+.note{font-size:.88rem;color:var(--muted);margin:.5rem 0 0}
+.note.warn{color:var(--lamp)}
+input.wide{max-width:260px}
+dialog{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:10px;padding:1rem;width:min(900px,94vw)}
+dialog::backdrop{background:#0008}
+dialog pre{font-family:var(--mono);font-size:.78rem;white-space:pre;overflow:auto;max-height:65vh;background:var(--ink);padding:.8rem;border-radius:8px}
+.job .kind{font-size:.75rem;color:var(--muted)}
+.tm{display:flex;gap:.7rem;align-items:center;padding:.45rem .5rem;border-radius:6px;cursor:pointer}
+.tm:hover{background:var(--raise)} .tm.sel{background:var(--lamp-dim)}
+.tm img,.tm .ph{width:34px;height:51px;border-radius:3px;object-fit:cover;background:var(--ink);flex:none}
+.tm small{display:block;color:var(--muted)}
+#tres{margin-top:.6rem;max-height:300px;overflow:auto}
+#tlink a{color:var(--lamp)}
+.pick{display:flex;gap:.5rem;flex-wrap:wrap;margin-top:.6rem}
+
+/* repost */
+.rules{border:1px solid var(--line);border-radius:8px;padding:.7rem .8rem;margin:.8rem 0}
+.rhead{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+.rrow{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-top:.5rem}
+.rrow select{min-width:11rem}
+.rrow input[type=text]{flex:1;width:auto;min-width:10rem;max-width:28rem}
+.rgroup{margin-top:.6rem;padding:.45rem .7rem .6rem;border-left:3px solid var(--lamp);background:#141a30;border-radius:0 6px 6px 0}
+.rtools{display:flex;gap:.4rem;margin-top:.6rem;flex-wrap:wrap}
+.rdel{background:none;border-color:transparent;color:var(--muted)}
+#rlist tbody tr{cursor:pointer}
+#rlist tbody tr:hover td{background:var(--raise)}
+#rlist tbody tr.sel td{background:var(--lamp-dim)}
+#rlist small,#rres small{display:block;color:var(--muted);font-family:var(--mono);font-size:.75rem;word-break:break-all}
+.num{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.hs{font-size:.78rem;border:1px solid var(--line);border-radius:5px;padding:0 .4rem;white-space:nowrap;color:var(--muted)}
+.hs-absent,.hs-crossseeded{color:var(--ok);border-color:#67c99a66}
+.hs-allowed,.hs-job,.hs-remux,.hs-same,.hs-review,.hs-similar,.hs-replaceable,.hs-dead,.hs-unknown{color:var(--lamp);border-color:#f3b44366}
+.hs-reseed{color:var(--ok);border-color:#67c99a66}
+.hs-identical,.hs-dupe,.hs-refused{color:var(--bad);border-color:#ec6b6b66}
+.lnk{color:var(--lamp)}
+.verdict{margin:.7rem 0 .4rem;font-weight:500}
+.verdict.ok{color:var(--ok)} .verdict.warn{color:var(--lamp)} .verdict.bad{color:var(--bad)}
+.rel-name{font-family:var(--mono);font-size:1rem;word-break:break-all;padding:.8rem 1rem;border-radius:8px;background:var(--ink);border:1px solid var(--line)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<header><h1>Postmuxarr</h1>
+  <nav class="tabs" aria-label="Mode"><button data-tab="remux" class="on">Remux</button><button data-tab="repost">Repost</button></nav>
+  <span class="free" id="free"></span></header>
+
+<div class="layout">
+<main id="v-remux">
+  <section class="step" id="s1">
+    <h2><span class="n">1</span>Source</h2>
+    <input type="text" id="bq" autocomplete="off" spellcheck="false" placeholder="Rechercher une source (titre, nom de dossier)…  Échap pour effacer" style="max-width:30rem;margin:0 0 .7rem">
+    <div id="browse"></div>
+  </section>
+
+  <section class="step" id="s2" hidden>
+    <h2><span class="n">2</span>Playlist <span class="sub" id="s2sub"></span></h2>
+    <div class="actions" id="bdbar"></div>
+    <div id="playlists"></div>
+  </section>
+
+  <section class="step" id="s3" hidden>
+    <h2><span class="n">3</span>Pistes <span class="sub" id="s3sub"></span></h2>
+    <div class="scroll" id="tracks"></div>
+  </section>
+
+  <section class="step" id="s4" hidden>
+    <h2><span class="n">4</span>Nom de release</h2>
+    <div class="box" id="tmdb" hidden>
+      <div class="row">
+        <input type="text" id="tq" placeholder="Titre à chercher" style="flex:1;min-width:200px">
+        <input type="text" id="ty" placeholder="Année" style="width:5.5rem">
+        <button class="btn small" id="tgo">Chercher sur TMDB</button>
+        <span id="tlink"></span>
+      </div>
+      <div id="tres"></div>
+    </div>
+    <div class="box" id="hdfbox" hidden></div>
+    <div class="release" id="release"></div>
+    <div class="fields" id="fields"></div>
+    <p class="legend"><u>soulignement gris</u> : déduit des pistes · <i>soulignement ambre</i> : modifié à la main</p>
+  </section>
+
+  <section class="step" id="s5" hidden>
+    <h2><span class="n">5</span>Lancement</h2>
+    <div class="opts">
+      <label><input type="checkbox" id="o-comp" checked> Sous-titres non compressés</label>
+      <label><input type="checkbox" id="o-nfo" checked> Afficher le MediaInfo à la fin</label>
+      <label><input type="checkbox" id="o-link" checked> Hardlink vers Plex</label>
+      <label><input type="checkbox" id="o-bdi" checked> Joindre le rapport BDInfo</label>
+      <label>Langue des chapitres <select id="o-chap"></select></label>
+      <label>Noms des chapitres <input type="text" id="o-chtpl" class="wide"></label>
+      <label class="full">Source (1re ligne du MediaInfo) <input type="text" id="o-srcl"></label>
+    </div>
+    <div class="box" id="tbox">
+      <h3><label style="display:flex;gap:.5rem;align-items:center"><input type="checkbox" id="t-on"> Créer le torrent et le seeder dans qBittorrent</label></h3>
+      <div id="tdetail"></div>
+    </div>
+    <div class="row" id="gobar"></div>
+    <p class="note" id="reason"></p>
+    <pre class="cmd" id="cmd" hidden></pre>
+  </section>
+</main>
+
+<main id="v-repost" hidden>
+  <section class="step">
+    <h2><span class="n">1</span>Releases à reposter <span class="sub" id="invsub"></span></h2>
+    <div class="row"><button class="btn small" id="inv-refresh">Actualiser l'inventaire Nettoyarr</button><span class="muted" id="inv-prog"></span></div>
+    <div id="rwarn"></div>
+    <div class="rules" id="rules"></div>
+    <p class="note" id="rcount"></p>
+    <div id="rhidden" style="margin:-.3rem 0 .6rem"></div>
+    <input type="text" id="rq" autocomplete="off" spellcheck="false" placeholder="Rechercher une release (titre, nom)…  Échap pour effacer" style="max-width:30rem;margin:0 0 .6rem">
+    <div class="row" id="rbulk" style="margin:0 0 .6rem"></div>
+    <div class="scroll" id="rlist"></div>
+  </section>
+  <section class="step" id="r2" hidden>
+    <h2><span class="n">2</span>Vérification et upload <span class="sub" id="r2sub"></span></h2>
+    <div id="rdetail"></div>
+  </section>
+</main>
+
+<aside>
+  <h2>Jobs</h2>
+  <p class="hint">Ils tournent sur le NAS : tu peux fermer cette page.</p>
+  <div id="jobs"><p class="muted">Aucun job pour l'instant.</p></div>
+</aside>
+</div>
+<dialog id="modal"><div class="row" style="justify-content:space-between;margin-bottom:.6rem">
+  <strong id="mtitle"></strong><span class="row"><a class="btn small" id="mtor" hidden download>Télécharger .torrent</a><button class="btn small" id="mdl" hidden>Télécharger .nfo</button><button class="btn small" id="mcopy">Copier</button><button class="btn small" id="mclose">Fermer</button></span></div>
+  <pre id="mbody"></pre></dialog>
+<div id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const gb = b => b ? (b / 1e9).toFixed(1).replace('.', ',') + ' Go' : '';
+const dur = s => { s = Math.round(s || 0); const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  return `${h}:${String(m).padStart(2,'0')}:${String(x).padStart(2,'0')}`; };
+const isFr = l => ['fre','fra','fr'].includes(l);
+// langue originale TMDB (ISO 639-1) → code des pistes (ISO 639-2/B)
+const ISO1 = {fr: 'fre', en: 'eng', de: 'ger', it: 'ita', es: 'spa', pt: 'por', ja: 'jpn', nl: 'dut', sv: 'swe', da: 'dan',
+  no: 'nor', ru: 'rus', zh: 'chi', ko: 'kor', pl: 'pol', cs: 'cze', hu: 'hun', fi: 'fin', el: 'gre', tr: 'tur', he: 'heb'};
+const LALIAS = {fra: 'fre', deu: 'ger', nld: 'dut', ces: 'cze', ell: 'gre', zho: 'chi'};
+const sameLang = (l, orig) => !!orig && (LALIAS[l] || l) === (ISO1[orig] || orig);
+const kbps = b => { const k = +b / 1000;
+  return (k < 10 ? k.toFixed(3) : k < 100 ? k.toFixed(1) : String(Math.round(k))).replace('.', ',') + ' kbps'; };
+const post = (url, body) => api(url, {method: 'POST', body: JSON.stringify(body)});
+const PIECES = [[0,'Auto'],[1048576,'1 MiB'],[2097152,'2 MiB'],[4194304,'4 MiB'],[8388608,'8 MiB'],[16777216,'16 MiB'],[33554432,'32 MiB']];
+
+async function api(url, opts = {}) {
+  const r = await fetch(url, {headers: {'Content-Type': 'application/json'}, ...opts});
+  const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = t; }
+  if (!r.ok) throw new Error(j && j.detail ? (typeof j.detail === 'string' ? j.detail : JSON.stringify(j.detail)) : t);
+  return j;
+}
+function toast(msg, err) { const t = $('#toast'); t.textContent = msg; t.className = 'on' + (err ? ' err' : '');
+  clearTimeout(toast.h); toast.h = setTimeout(() => t.className = '', err ? 6000 : 3000); }
+function torrentUrl(p) { return '/api/download?path=' + encodeURIComponent(p); }
+function modal(title, text, file, torrent) { $('#mtitle').textContent = title; $('#mbody').textContent = text;
+  $('#mtor').hidden = !torrent; if (torrent) $('#mtor').href = torrentUrl(torrent);
+  $('#mdl').hidden = !file; $('#mdl').dataset.file = file || ''; $('#modal').showModal(); }
+$('#mdl').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([$('#mbody').textContent], {type: 'text/plain;charset=utf-8'}));
+  a.download = $('#mdl').dataset.file; document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('#mclose').onclick = () => $('#modal').close();
+$('#mcopy').onclick = async () => { try { await navigator.clipboard.writeText($('#mbody').textContent); toast('Copié.'); }
+  catch { const r = document.createRange(); r.selectNodeContents($('#mbody')); getSelection().removeAllRanges(); getSelection().addRange(r); toast('Texte sélectionné : ⌘C pour copier.'); } };
+
+let cfg, S = {mine: new Set(), shown: new Set(), browse: null, playlists: null, disc: null, info: null, tracks: [], f: {}, edited: {}, nameOverride: null};
+const KEYS = ['title','year','edition','lang','subs','res','source','video','audio','group'];
+const LABELS = {title:'Titre', year:'Année', edition:'Édition', lang:'Langue', subs:'Sous-titres', res:'Résolution',
+  source:'Source', video:'Vidéo', audio:'Audio', group:'Groupe'};
+
+async function launch(url, body, what) {
+  try { const r = await post(url, body); S.mine.add(r.id); toast(`${what} : job #${r.id} lancé.`); refreshJobs(); return r; }
+  catch (e) { toast(e.message, true); }
+}
+async function showMediainfo(id, name, torrent) {
+  try { if (!$('#modal').open) modal('MediaInfo', await api(`/api/jobs/${id}/mediainfo`), (name || 'mediainfo') + '.nfo', torrent); }
+  catch (e) { toast(e.message, true); }
+}
+async function showReport(path) {
+  try { modal('Rapport BDInfo', await api('/api/bdinfo/report?path=' + encodeURIComponent(path))); }
+  catch (e) { toast(e.message, true); }
+}
+
+/* ---------------------------------------------------------------- onglets */
+function showTab(t) {
+  $('#v-remux').hidden = t !== 'remux'; $('#v-repost').hidden = t !== 'repost';
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
+  history.replaceState(null, '', t === 'repost' ? '#repost' : location.pathname);
+  if (t === 'repost' && !R.started) { R.started = true; startRepost(); }
+}
+document.querySelector('.tabs').addEventListener('click', e => { const t = e.target.dataset.tab; if (t) showTab(t); });
+
+/* ---------------------------------------------------------------- 1. source */
+async function browse(path = '') {
+  try { S.browse = await api('/api/browse?path=' + encodeURIComponent(path) + (S.showAll ? '&all=1' : '')); S.iso = null; S.scan = {}; renderBrowse(); loadScan(); }
+  catch (e) { toast(e.message, true); }
+}
+function renderBrowse() {
+  const b = S.browse;
+  $('#free').textContent = 'Libre sur le NAS : ' + gb(b.free);
+  const roots = Object.entries(b.roots).map(([k, v]) => `<button class="btn small" data-go="${esc(v)}">${esc(k)}</button>`).join('');
+  const rows = [];
+  if (b.parent) rows.push(`<div class="entry" data-go="${esc(b.parent)}"><span class="tag">..</span>Dossier parent</div>`);
+  const discs = b.entries.filter(e => e.kind === 'bdmv' || e.kind === 'iso');
+  const isDone = e => e.done || (S.scan[e.path] || {}).done;
+  const masked = e => e.masked || (S.hideDone && isDone(e));
+  const nMasked = b.entries.filter(masked).length;
+  b.entries.forEach(e => {
+    const sc = S.scan[e.path];
+    if (masked(e) && !S.showMasked) return;
+    if (S.q && !qMatch(S.q, e.name, sc && sc.tmdb_title)) return;
+    if (S.worthOnly && discs.length && (!sc || sc.done || !WORTH.includes(sc.status))) return;
+    const tag = {dir: 'dossier', bdmv: 'Blu-ray', mkv: 'MKV', iso: 'ISO', m2ts: 'M2TS'}[e.kind];
+    const act = {dir: 'data-go', bdmv: 'data-bd', mkv: 'data-src', iso: 'data-iso'}[e.kind] || 'data-na';
+    rows.push(`<div class="entry" ${act}="${esc(e.path)}"${masked(e) ? ' style="opacity:.5"' : ''}><span class="tag ${e.kind === 'bdmv' || e.kind === 'iso' ? 'bd' : ''}">${tag}</span>
+      <span>${esc(e.name)}</span>${sc ? scanTag(sc) : e.done ? '<span class="hs" style="margin-left:.5rem">Déjà remuxé</span>' : ''}<span class="muted" style="margin-left:auto">${gb(e.size)}</span>
+      <button class="btn small rdel" data-mask="${esc(e.path)}">${e.masked ? 'Réafficher' : 'Masquer'}</button></div>`);
+  });
+  const iso = S.iso ? `<div class="box"><h3>${esc(S.iso.name)}</h3>
+    <p class="note" style="margin:0 0 .6rem">mkvmerge ne lit pas les ISO : il faut d'abord l'extraire (${gb(S.iso.size)} d'espace temporaire, supprimé après le remux). BDInfo, lui, lit l'ISO directement.</p>
+    <div class="row"><button class="btn primary small" data-extract="${esc(S.iso.path)}">Extraire pour remuxer</button>
+    <button class="btn small" data-bdinfo="${esc(S.iso.path)}">Lancer BDInfo</button>
+    <button class="btn small" data-report="${esc(S.iso.path)}">Voir le BDInfo</button></div></div>` : '';
+  const html = `<div class="row">${roots}${b.is_bdmv ? `<button class="btn primary small" data-bd="${esc(b.path)}">Analyser ce Blu-ray</button>` : ''}</div>
+    <p class="path">${esc(b.path)}</p>${iso}${discs.length && cfg.repost && cfg.repost.hdf_api ? scanBar(discs) : ''}
+    ${nMasked || S.showMasked || b.entries.some(isDone) ? `<div class="row" style="margin:.2rem 0 .4rem">
+      <label class="muted"><input type="checkbox" data-hidedone="1" ${S.hideDone ? 'checked' : ''}> Masquer les déjà remuxés</label>
+      ${nMasked ? `<a href="#" class="lnk" data-showmasked="1">${S.showMasked ? 'Cacher' : 'Afficher'} les ${nMasked} masqué(s)</a>` : ''}</div>` : ''}
+    <div class="list">${rows.join('') || `<p class="muted" style="padding:.6rem .8rem;margin:0">${S.q ? 'Aucune source ne correspond à la recherche.' : b.hidden ? 'Aucun Blu-ray ici.' : 'Dossier vide.'}</p>`}</div>
+    ${b.hidden || S.showAll ? `<p class="note"><a href="#" class="lnk" data-showall="1">${S.showAll ? 'Blu-ray et ISO seulement' : `Tout afficher (${b.hidden} élément(s) sans Blu-ray masqué(s))`}</a></p>` : ''}`;
+  if (html === renderBrowse.last) return;  // rien de neuf : la liste garde sa position
+  const list = $('#browse .list'), top = list && renderBrowse.path === b.path ? list.scrollTop : 0;
+  $('#browse').innerHTML = renderBrowse.last = html; renderBrowse.path = b.path;
+  const nl = $('#browse .list'); if (nl) nl.scrollTop = top;
+}
+/* ---------------------------------------------------------------- analyse HDF d'un dossier de Blu-ray */
+const WORTH = ['absent'];  // « Vaut le coup » : rien sur HDF
+const SCAN = {absent: ['Vaut le coup', 'absent'], review: ['À juger', 'review'], dupe: ['Doublon', 'dupe'],
+  replaceable: ['Sans seeder : note modo ?', 'replaceable'], ambiguous: ['Film ambigu', 'review'], error: ['Erreur', 'dupe'],
+  done: ['Déjà remuxé', 'none'], nofilm: ['Film introuvable', 'review']};
+function scanTag(sc) {
+  const [lab, cls] = SCAN[sc.done ? 'done' : sc.status] || [sc.status, 'none'];
+  const tip = [sc.tmdb_title ? `TMDB : ${sc.tmdb_title}${sc.partial ? ` — trouvé avec « ${sc.tmdb_query} » seulement : à confirmer` : ''}`
+      : sc.status === 'nofilm' ? `Cherché sur TMDB : « ${sc.title} »` : 'Sans clé TMDB : recherche HDF par titre',
+    sc.res ? `${sc.res}, ~${gb(sc.size)}${sc.iso ? ' (taille de l\'ISO, approximatif)' : ''}` : '',
+    sc.error || '', ...(sc.matches || []).map(m => `${m.kind === 'dupe' ? 'Doublon' : 'À juger'} : ${m.name} (${gb(m.size)}${m.why ? ', ' + m.why : ''})`)]
+    .filter(Boolean).join('\n');
+  return `<span class="hs hs-${cls}" style="margin-left:.5rem" title="${esc(tip)}">${lab}${sc.iso && !sc.done ? ' ~' : ''}${sc.partial && !sc.done ? ' ?' : ''}</span>`
+    + (sc.tmdb_title && !sc.done ? `<span class="muted" style="margin-left:.5rem;font-size:.8rem">${esc(sc.tmdb_title)}</span>` : '');
+}
+function scanBar(discs) {
+  const done = discs.filter(e => S.scan[e.path]).length, worth = discs.filter(e => { const x = S.scan[e.path]; return x && !x.done && WORTH.includes(x.status); }).length;
+  return `<div class="row" style="margin:.4rem 0">
+    <button class="btn small" data-scan="1" ${S.scanBusy ? 'disabled' : ''}>${S.scanBusy ? 'Analyse en cours…' : done ? 'Réanalyser pour HDF' : 'Analyser ce dossier pour HDF'}</button>
+    ${done ? `<label class="muted"><input type="checkbox" data-worth="1" ${S.worthOnly ? 'checked' : ''}> Vaut le coup seulement (${worth})</label>` : ''}
+    <span class="muted">${done}/${discs.length} analysé(s) · ~10 s par film (API HDF), résultats gardés 6 h</span></div>`;
+}
+async function loadScan() {
+  if (!S.browse || !cfg.repost || !cfg.repost.hdf_api || !S.browse.entries.some(e => e.kind === 'bdmv' || e.kind === 'iso')) return;
+  try { S.scan = await api('/api/hdf/scan?path=' + encodeURIComponent(S.browse.path)); renderBrowse(); } catch {}
+}
+async function toggleMask(path) {
+  const x = S.browse.entries.find(y => y.path === path); if (!x) return;
+  try { await post('/api/browse/mask', {path, masked: !x.masked}); x.masked = !x.masked; renderBrowse(); }
+  catch (err) { toast(err.message, true); }
+}
+$('#browse').addEventListener('click', e => {
+  if (e.target.dataset.mask) { e.stopPropagation(); return toggleMask(e.target.dataset.mask); }
+  if (e.target.dataset.hidedone) { S.hideDone = e.target.checked;
+    try { localStorage.setItem('pm.hideDone', S.hideDone ? '1' : '0'); } catch {} return renderBrowse(); }
+  if (e.target.dataset.showmasked) { e.preventDefault(); S.showMasked = !S.showMasked; return renderBrowse(); }
+  if (e.target.dataset.showall) { e.preventDefault(); S.showAll = !S.showAll; return browse(S.browse.path); }
+  if (e.target.dataset.worth) { S.worthOnly = e.target.checked; return renderBrowse(); }
+  if (e.target.dataset.scan) {
+    const refresh = Object.keys(S.scan).length > 0;
+    return launch('/api/hdf/scan', {path: S.browse.path, refresh}, 'Analyse HDF').then(r => { if (r) { S.scanBusy = true; renderBrowse(); } });
+  }
+  const el = e.target.closest('[data-go],[data-bd],[data-src],[data-iso],[data-na],[data-extract],[data-bdinfo],[data-report]'); if (!el) return;
+  const d = el.dataset;
+  if (d.go) browse(d.go);
+  else if (d.bd) loadPlaylists(d.bd);
+  else if (d.src) { $('#s2').hidden = true; loadTracks(d.src); }
+  else if (d.iso) { S.iso = S.browse.entries.find(x => x.path === d.iso); renderBrowse(); }
+  else if (d.extract) launch('/api/extract', {path: d.extract}, 'Extraction');
+  else if (d.bdinfo) launch('/api/bdinfo', {path: d.bdinfo}, 'BDInfo');
+  else if (d.report) showReport(d.report);
+  else toast('Les .m2ts isolés ne sont pas pris en charge : ouvre le dossier Blu-ray.', true);
+});
+
+/* ---------------------------------------------------------------- 2. playlists */
+async function loadPlaylists(path) {
+  ['#s3','#s4','#s5'].forEach(s => $(s).hidden = true);
+  S.info = null; S.disc = path;
+  $('#s2').hidden = false; $('#s2sub').textContent = path.split('/').pop();
+  $('#bdbar').innerHTML = `<button class="btn small" data-bdinfo="${esc(path)}">Lancer BDInfo</button>
+    <button class="btn small" data-report="${esc(path)}">Voir le BDInfo</button>`;
+  $('#playlists').innerHTML = '<p class="muted">Lecture des playlists…</p>';
+  try {
+    const r = await api('/api/playlists?path=' + encodeURIComponent(path));
+    S.playlists = r.playlists; S.encrypted = r.encrypted; S.showShort = false; renderPlaylists();
+  } catch (e) { $('#playlists').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+$('#bdbar').addEventListener('click', e => {
+  const d = e.target.dataset;
+  if (d.bdinfo) launch('/api/bdinfo', {path: d.bdinfo}, 'BDInfo');
+  if (d.report) showReport(d.report);
+});
+// « 00003.m2ts ×612 » au lieu de 612 fois le même nom ; au-delà de 8 morceaux, la suite est résumée
+function clipList(files) {
+  const runs = [];
+  files.forEach(f => { const r = runs[runs.length - 1]; if (r && r[0] === f) r[1]++; else runs.push([f, 1]); });
+  const txt = runs.slice(0, 8).map(([f, n]) => n > 1 ? `${f} ×${n}` : f);
+  if (runs.length > 8) txt.push(`… (+${runs.length - 8})`);
+  return txt.join(', ');
+}
+function renderPlaylists() {
+  const all = S.playlists, ok = p => p.duration >= 300 && !p.loop;
+  const list = S.showShort ? all : all.filter(ok);
+  const rows = list.map(p => `<tr data-pl="${esc(p.path)}" style="cursor:pointer">
+    <td><input type="radio" name="pl" ${S.info && S.info.source === p.path ? 'checked' : ''}></td>
+    <td>${esc(p.name)}${p.loop ? ' <span class="hs hs-dead">boucle</span>' : ''}</td><td>${dur(p.duration)}</td><td>${gb(p.size)}</td>
+    <td class="dup">${esc(clipList(p.files))}${p.same_as.length ? `<br>identique à ${esc(p.same_as.join(', '))}` : ''}</td></tr>`).join('');
+  const hidden = all.length - list.length, loops = all.filter(p => p.loop).length;
+  $('#playlists').innerHTML = (S.encrypted ? '<p class="note warn">Dossier AACS présent : le disque est peut-être chiffré. Si l\'analyse des pistes échoue, il faudra MakeMKV.</p>' : '')
+    + `<div class="scroll"><table><tr><th></th><th>Playlist</th><th>Durée</th><th>Taille</th><th>Fichiers</th></tr>${rows}</table></div>
+    ${hidden ? `<p><button class="btn small" id="short">Afficher ${hidden} playlist(s) masquée(s) : moins de 5 min${loops ? `, ou en boucle (${loops}, le même clip répété : anti-copie ou menu)` : ''}</button></p>` : ''}`;
+  if (!S.info) { const first = list.find(ok) || list[0]; if (first) loadTracks(first.path); }
+}
+$('#playlists').addEventListener('click', e => {
+  if (e.target.id === 'short') { S.showShort = true; return renderPlaylists(); }
+  const tr = e.target.closest('[data-pl]'); if (tr) { tr.querySelector('input').checked = true; loadTracks(tr.dataset.pl); }
+});
+
+/* ---------------------------------------------------------------- 3. pistes */
+async function loadTracks(path) {
+  $('#s3').hidden = false; $('#tracks').innerHTML = '<p class="muted">Analyse des pistes…</p>';
+  try {
+    const info = await api('/api/tracks?path=' + encodeURIComponent(path));
+    S.info = info; initState(info); $('#o-srcl').value = info.source_label || ''; initTmdb(info); S.hdf = null; renderHdfBox();
+    $('#free').textContent = 'Libre sur le NAS : ' + gb(info.free);
+    $('#s3sub').textContent = [info.duration ? dur(info.duration) : '', info.chapters ? info.chapters + ' chapitres' : '', gb(info.size),
+      info.editable ? 'MKV du dossier remux : retouche possible sans remux' : ''].filter(Boolean).join(', ');
+    ['#s4','#s5'].forEach(s => $(s).hidden = false);
+    renderTracks(); renderFields(); renderGo(); $('#cmd').hidden = true;
+    if (!info.editable && info.size > info.free) toast('Espace libre insuffisant pour ce remux.', true);
+  } catch (e) { S.info = null; $('#tracks').innerHTML = `<p class="error">${esc(e.message)}</p>`; ['#s4','#s5'].forEach(s => $(s).hidden = true); }
+}
+
+function initState(info) {
+  const isMkv = info.source.toLowerCase().endsWith('.mkv');
+  S.origLang = info.original_language || ''; S.defaultEdited = false;
+  const audios = info.tracks.filter(t => t.type === 'audio');
+  const foreign = audios.some(t => !isFr(t.language) && t.language !== 'und');
+  // sous-titres : piste bien plus légère que les autres de la même langue = forcés (débits du rapport BDInfo)
+  const subMax = {};
+  info.tracks.forEach(t => { if (t.type === 'subtitles' && +t.bitrate > 0) subMax[t.language] = Math.max(subMax[t.language] || 0, +t.bitrate); });
+  const light = t => (+t.bitrate > 0 || t.bitrate_est) && +t.bitrate < 0.2 * (subMax[t.language] || 0);
+  S.tracks = info.tracks.filter(t => ['video','audio','subtitles'].includes(t.type)).map(t => {
+    const x = {...t, keep: true, nameAuto: !t.name};
+    if (t.type === 'audio') {
+      const known = [...cfg.french_variants, 'VO'].find(v => (t.name || '').split(' ').includes(v));
+      x.variant = known || autoVariant(t, S.origLang, foreign); x.variantAuto = !known;
+      if (!isMkv) x.original = ['VOF','VO'].includes(x.variant);
+    }
+    if (t.type === 'subtitles') {
+      x.kind = cfg.subtitle_kinds.find(k => (t.name || '').toLowerCase().includes(k.toLowerCase())) || (t.forced || light(t) ? 'Forcés' : 'Complets');
+      if (!isMkv) { x.default = false; x.forced = x.kind === 'Forcés'; }
+    }
+    if (t.type === 'video' && !isMkv) x.default = true;
+    if (t.type === 'video' && (t.language === 'und' || !isMkv)) {
+      x.language = (audios.find(a => sameLang(a.language, S.origLang)) || audios[0] || {}).language || 'und'; x.langAuto = true; }
+    return x;
+  });
+  if (!isMkv) pickDefaultAudio();
+  S.order0 = S.tracks.map(t => t.id).join(',');
+  S.edited = {}; S.nameOverride = info.release_name ?? null;
+  S.f = {title: info.title, year: info.year, edition: '', subs: '', source: cfg.source, group: cfg.group};
+  computeAuto();
+}
+
+// VOF/VO pour la langue originale ; doublage étranger d'un film (allemand d'un film français…) : ni VO ni VF, vide
+function autoVariant(t, orig, foreign) {
+  if (orig) return sameLang(t.language, orig) ? (isFr(t.language) ? 'VOF' : 'VO') : isFr(t.language) ? 'VFF' : '';
+  return isFr(t.language) ? (foreign ? 'VFF' : 'VOF') : 'VO';
+}
+function pickDefaultAudio() {  // VOF par défaut sur un film français, sinon la première piste audio
+  const aud = S.tracks.filter(t => t.type === 'audio' && t.keep !== false);
+  const main = aud.find(t => t.variant === 'VOF') || aud[0];
+  S.tracks.forEach(t => { if (t.type === 'audio') t.default = t === main; });
+}
+function applyOrigLang(orig) {  // film TMDB choisi : variantes, Original, Défaut et langue vidéo non modifiés à la main
+  if (!S.info || !orig || orig === S.origLang) return;
+  S.origLang = orig;
+  const isMkv = S.info.source.toLowerCase().endsWith('.mkv');
+  const foreign = S.tracks.some(t => t.type === 'audio' && !isFr(t.language) && t.language !== 'und');
+  S.tracks.forEach(t => {
+    if (t.type === 'audio' && t.variantAuto) { t.variant = autoVariant(t, orig, foreign); if (!isMkv) t.original = ['VOF','VO'].includes(t.variant); }
+    if (t.type === 'video' && t.langAuto) { const a = S.tracks.find(o => o.type === 'audio' && sameLang(o.language, orig)); if (a) t.language = a.language; }
+  });
+  if (!isMkv && !S.defaultEdited) pickDefaultAudio();
+  changed();
+}
+function autoName(t) {
+  const v = {codec: t.disp, res: t.res, variant: t.variant || (t.type === 'audio' ? cfg.languages[t.language] || t.language : ''), channels: t.channels, lang_name: cfg.languages[t.language] || t.language,
+    kind: t.kind, format: t.disp};
+  return (cfg.track_names[t.type] || '').replace(/\{(\w+)\}/g, (_, k) => v[k] ?? '').replace(/\s+/g, ' ').trim();
+}
+function langOptions(cur) {
+  const keys = Object.keys(cfg.languages).filter(k => k !== 'fra' && k !== 'deu');
+  if (!keys.includes(cur)) keys.unshift(cur);
+  return keys.map(k => `<option value="${k}" ${k === cur ? 'selected' : ''}>${esc(cfg.languages[k] || k)}</option>`).join('');
+}
+function renderTracks() {
+  const typeLab = {video: 'Vidéo', audio: 'Audio', subtitles: 'Sous-titres'};
+  const rows = S.tracks.map((t, i) => {
+    if (t.nameAuto) t.name = autoName(t);
+    const detail = t.type === 'video' ? [t.dims, t.res, t.hdr].filter(Boolean).join(' ')
+      : t.type === 'audio' ? [t.channels, t.bitrate ? (t.bitrate_est ? '~' : '') + kbps(t.bitrate) : ''].filter(Boolean).join(', ')
+      : [t.bitrate_est ? (+t.bitrate ? '~' + kbps(t.bitrate) : '~0 kbps') : t.bitrate ? kbps(t.bitrate) : '', t.elements ? t.elements + ' éléments' : '',
+         t.compression ? 'compressé : ' + t.compression : ''].filter(Boolean).join(', ');
+    const variant = t.type === 'audio' ? `<select data-k="variant" data-i="${i}">${['', ...(isFr(t.language) ? cfg.french_variants : ['VO'])]
+      .map(v => `<option value="${v}" ${v === t.variant ? 'selected' : ''}>${v || '—'}</option>`).join('')}</select>`
+      : t.type === 'subtitles' ? `<select data-k="kind" data-i="${i}">${cfg.subtitle_kinds.map(k => `<option ${k === t.kind ? 'selected' : ''}>${k}</option>`).join('')}</select>` : '';
+    const flag = (k, show = true) => show ? `<input type="checkbox" data-k="${k}" data-i="${i}" ${t[k] ? 'checked' : ''} aria-label="${k}">` : '';
+    return `<tr class="${t.keep ? '' : 'off'}">
+      <td><input type="checkbox" data-k="keep" data-i="${i}" ${t.keep ? 'checked' : ''} aria-label="Garder"></td>
+      <td><div class="order"><button data-up="${i}" aria-label="Monter">▲</button><button data-down="${i}" aria-label="Descendre">▼</button></div></td>
+      <td class="codec">${t.id}</td>
+      <td class="codec"><b>${typeLab[t.type]} ${esc(t.disp)}</b><small>${esc(detail)}</small></td>
+      <td><select data-k="language" data-i="${i}">${langOptions(t.language)}</select></td>
+      <td>${variant}</td>
+      <td style="min-width:220px"><input type="text" data-k="name" data-i="${i}" value="${esc(t.name)}" class="${t.nameAuto ? '' : 'edited'}"></td>
+      <td style="text-align:center">${flag('default')}</td>
+      <td style="text-align:center">${flag('forced', t.type !== 'video')}</td>
+      <td style="text-align:center">${flag('original', t.type === 'audio')}</td></tr>`;
+  }).join('');
+  $('#tracks').innerHTML = `<table><tr><th>Garder</th><th></th><th>ID</th><th>Piste</th><th>Langue</th><th>Type</th>
+    <th>Nom de la piste</th><th>Défaut</th><th>Forcé</th><th>Original</th></tr>${rows}</table>`
+    + (S.info && /\.mpls$/i.test(S.info.source) && S.tracks.some(t => t.type === 'subtitles' && !t.bitrate && !t.bitrate_est)
+      ? `<p class="note">Débit des sous-titres inconnu${S.info.bdinfo_note ? ' (' + esc(S.info.bdinfo_note) + ')' : ''} : il vient du rapport BDInfo de cette playlist. Lance BDInfo (étape 2), puis rouvre la playlist.</p>` : '');
+}
+$('#tracks').addEventListener('click', e => {
+  const up = e.target.closest('[data-up]'), down = e.target.closest('[data-down]'); if (!up && !down) return;
+  const i = +(up || down).dataset[up ? 'up' : 'down'], j = up ? i - 1 : i + 1;
+  if (j < 0 || j >= S.tracks.length) return;
+  [S.tracks[i], S.tracks[j]] = [S.tracks[j], S.tracks[i]]; changed();
+});
+$('#tracks').addEventListener('input', e => {
+  const el = e.target; if (el.dataset.k !== 'name') return;
+  const t = S.tracks[+el.dataset.i]; t.name = el.value; t.nameAuto = false; el.classList.add('edited'); $('#cmd').hidden = true;
+});
+$('#tracks').addEventListener('change', e => {
+  const el = e.target, k = el.dataset.k; if (!k || k === 'name') return;
+  const t = S.tracks[+el.dataset.i];
+  t[k] = el.type === 'checkbox' ? el.checked : el.value;
+  if (k === 'kind') { t.forced = t.kind === 'Forcés'; if (!t.nameAuto) t.nameAuto = true; }
+  if (k === 'variant') { t.variantAuto = false; t.original = ['VOF','VO'].includes(t.variant); if (!t.nameAuto) t.nameAuto = true;
+    if (['VOF','VO'].includes(t.variant)) S.tracks.forEach(o => { if (o.type === 'video' && o.langAuto) o.language = t.language; });
+    if (!S.defaultEdited && !S.info.source.toLowerCase().endsWith('.mkv')) pickDefaultAudio(); }
+  if (k === 'language') t.langAuto = false;
+  if (k === 'language' && t.type === 'audio') { t.variantAuto = true;
+    t.variant = autoVariant(t, S.origLang, S.tracks.some(o => o.type === 'audio' && !isFr(o.language) && o.language !== 'und'));
+    t.original = ['VOF','VO'].includes(t.variant); }
+  if (k === 'default' && t.type === 'audio') S.defaultEdited = true;
+  if (k === 'default' && t.default && t.type === 'audio')
+    S.tracks.forEach(o => { if (o !== t && o.type === 'audio') o.default = false; });
+  changed();
+});
+function changed() { computeAuto(); renderTracks(); renderFields(); renderGo(); $('#cmd').hidden = true; }
+
+/* ---------------------------------------------------------------- 4. nom de release */
+function relTitle(s) {
+  return (s || '').replace(/œ/g, 'oe').replace(/Œ/g, 'Oe').replace(/æ/g, 'ae').replace(/Æ/g, 'Ae').replace(/ß/g, 'ss')
+    .normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[’'\s_]+/g, '.').replace(/[^A-Za-z0-9.\-]/g, '')
+    .replace(/(?<!\.)\.\.(?!\.)/g, '.').replace(/\.{4,}/g, '...').replace(/^\.+|\.+$/g, '');
+}
+function computeAuto() {
+  const kept = S.tracks.filter(t => t.keep);
+  const video = kept.find(t => t.type === 'video') || {};
+  const audios = kept.filter(t => t.type === 'audio');
+  const main = audios.find(t => t.default) || audios[0];
+  const fr = audios.filter(t => isFr(t.language)).map(t => t.variant), other = audios.filter(t => !isFr(t.language));
+  let lang = '';
+  if (audios.length) {
+    const u = [...new Set(fr)].filter(Boolean), vf2 = u.includes('VFF') && u.includes('VFQ');
+    if (fr.length && !other.length) lang = ['French', vf2 ? 'VF2' : u[0]].filter(Boolean).join('.');
+    else if (fr.length) lang = ['MULTI', vf2 ? 'VF2' : u.find(v => v !== 'VOF') || u[0]].filter(Boolean).join('.');
+    else lang = 'VO';
+  }
+  const auto = {lang, res: video.res || '', video: video.rel || '', audio: main ? [main.rel, main.channels].filter(Boolean).join('.') : ''};
+  for (const k in auto) if (!S.edited[k]) S.f[k] = auto[k];
+  S.auto = auto;
+}
+function releaseParts() {
+  const tpl = cfg.release_template, items = [], re = /\{(\w+)\}/g; let m, last = 0;
+  while ((m = re.exec(tpl))) { items.push({sep: tpl.slice(last, m.index), k: m[1]}); last = m.index + m[0].length; }
+  const out = [];
+  items.forEach(it => { const v = it.k === 'title' ? relTitle(S.f.title) : (S.f[it.k] || ''); if (!v) return;
+    if (out.length && it.sep) out.push({sep: it.sep}); out.push({k: it.k, v}); });
+  if (tpl.slice(last)) out.push({sep: tpl.slice(last)});
+  return out;
+}
+function releaseName() { return S.nameOverride != null ? relTitle(S.nameOverride) : releaseParts().map(p => p.sep ?? p.v).join(''); }
+function renderRelease() {
+  if (S.nameOverride != null) { $('#release').innerHTML = `<span class="man">${esc(releaseName())}</span><span class="sep">.mkv</span>`; return; }
+  const auto = new Set(['lang','res','video','audio']);
+  $('#release').innerHTML = releaseParts().map(p => p.sep !== undefined ? `<span class="sep">${esc(p.sep)}</span>`
+    : `<span class="${S.edited[p.k] ? 'man' : auto.has(p.k) ? 'auto' : ''}" title="${LABELS[p.k]}">${esc(p.v)}</span>`).join('')
+    + '<span class="sep">.mkv</span>';
+}
+function renderFields() {
+  const opt = (k, list) => `<select data-f="${k}" class="${S.edited[k] ? 'edited' : ''}">${list.map(v => `<option value="${esc(v)}" ${v === S.f[k] ? 'selected' : ''}>${esc(v || '—')}</option>`).join('')}</select>`;
+  const fields = KEYS.map(k => {
+    const reset = S.edited[k] && k in S.auto ? `<button class="reset" data-reset="${k}">auto</button>` : '';
+    const ctl = k === 'edition' ? opt(k, cfg.editions) : k === 'subs' ? opt(k, cfg.subs_tags)
+      : `<input type="text" data-f="${k}" value="${esc(S.f[k])}" class="${S.edited[k] ? 'edited' : ''}">`;
+    return `<label class="${k === 'title' ? 'wide' : ''}"><span class="lab">${LABELS[k]} ${reset}</span>${ctl}</label>`;
+  }).join('');
+  const resetLab = S.info && S.info.editable ? 'utiliser le nom généré' : 'rétablir';
+  $('#fields').innerHTML = fields + `<label class="full"><span class="lab">Nom complet ${S.nameOverride != null ? `<button class="reset" data-reset="__name">${resetLab}</button>` : ''}</span>
+    <input type="text" data-f="__name" value="${esc(releaseName())}" class="${S.nameOverride != null ? 'edited' : ''}"></label>`;
+  renderRelease();
+}
+$('#fields').addEventListener('input', e => {
+  const k = e.target.dataset.f; if (!k) return;
+  if (k === '__name') {
+    const first = S.nameOverride == null; S.nameOverride = e.target.value;
+    if (first) {  // fait apparaître le bouton « rétablir » sans perdre le curseur
+      renderFields(); const el = $('[data-f="__name"]'); el.focus(); el.setSelectionRange(el.value.length, el.value.length);
+    }
+  }
+  else { S.f[k] = k === 'title' ? e.target.value : e.target.value.trim(); S.edited[k] = true; e.target.classList.add('edited');
+    const full = $('[data-f="__name"]'); if (full && S.nameOverride == null) full.value = releaseName(); }
+  renderRelease(); $('#cmd').hidden = true;
+});
+$('#fields').addEventListener('click', e => {
+  const k = e.target.dataset.reset; if (!k) return; e.preventDefault();
+  if (k === '__name') S.nameOverride = null; else { delete S.edited[k]; computeAuto(); }
+  renderFields();
+});
+
+/* ---------------------------------------------------------------- HDF : le remux vaut-il le coup ? */
+// Nouvelle release : règle stricte (pas d'exception HDForever, réservée aux reposts). Taille estimée = playlist entière.
+const NEW_VERDICT = {
+  absent: ['ok', r => `Aucun remux ${r} sur HD-Forever : le remux vaut le coup.`],
+  dupe: ['bad', r => `Doublon : un remux ${r} de taille proche avec les mêmes langues est déjà sur HD-Forever. Nouvelle release interdite (l'exception HDForever ne vaut que pour un repost).`],
+  replaceable: ['warn', r => `Le remux ${r} déjà sur HD-Forever n'a plus de seeder, mais ça ne suffit pas : il n'est remplaçable que si sa fiche porte la note modo « Remplacement autorisé » (inactif depuis plus de 2 mois, reseed demandé sans succès depuis 7 jours). L'API ne la donne pas : vérifie-la sur la fiche.`],
+  review: ['warn', r => `Un remux ${r} existe déjà sur HD-Forever, mais il diffère (taille ou langues, voir « À juger ») : vérifie qu'il ne s'agit pas du même disque avant de remuxer.`],
+  ambiguous: ['warn', () => 'Plusieurs films correspondent au titre : choisis le film TMDB, puis revérifie.'],
+};
+function renderHdfBox() {
+  const box = $('#hdfbox');
+  box.hidden = !(cfg.repost && cfg.repost.hdf_api) || !S.info || S.info.editable;
+  if (box.hidden) return;
+  const h = S.hdf;
+  let body = '';
+  if (h && h.error) body = `<p class="error">${esc(h.error)}</p>`;
+  else if (h && h.res) {
+    const rel = h.res.releases[0] || {}, resol = (releaseName().match(/\b(2160p|1080p|1080i|720p)\b/i) || [''])[0];
+    const [cls, msg] = NEW_VERDICT[rel.status] || ['', () => ''];
+    const rows = (rel.items || []).map(i => `<tr><td><span class="hs hs-${i.kind === 'other' ? 'none' : i.kind}">${KIND_HDF[i.kind] === 'À arbitrer' ? 'À juger' : KIND_HDF[i.kind]}</span></td>
+      <td>${i.url ? `<a class="lnk" href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.group)}</a>` : esc(i.group)}<small>${esc(i.name)}${i.why ? ' — ' + esc(i.why) : ''}</small></td>
+      <td>${esc([i.media, i.encoding].filter(Boolean).join(' · '))}</td><td class="num">${gb(i.size)}</td>
+      <td class="num">${i.dead ? '<span class="hs hs-dead">0 seeder</span>' : i.seeders ?? ''}</td></tr>`).join('');
+    const at = new Date(h.res.at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'});
+    const modo = rel.status !== 'replaceable' ? '' : h.modo
+      ? `<p class="verdict ok">Note modo confirmée : tu peux remuxer et uploader le tien, puis signale l'ancien pour suppression.</p>`
+      : `<div class="row"><button class="btn small" id="hdfmodo">La fiche indique « Remplacement autorisé »</button></div>`;
+    body = `<p class="verdict ${cls}">${esc(msg(resol || 'de même résolution'))}</p>${modo}
+      ${!h.res.torrents.length ? '' : rows ? `<div class="scroll"><table><thead><tr><th></th><th>Sur HDF</th><th>Média</th><th class="num">Taille</th><th class="num">Seeders</th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}
+      <p class="note">${h.res.torrents.length} torrent(s) du film sur HDF · vérifié le ${at}${h.tmdb ? '' : ' · sans film TMDB : recherche par titre et année'} · taille du remux estimée à ${gb(S.info.size)} (playlist entière)</p>`;
+  }
+  box.innerHTML = `<h3>Sur HD-Forever</h3><div class="row"><button class="btn small" id="hdfgo" ${h && h.busy ? 'disabled' : ''}>${h && h.res ? 'Revérifier' : 'Vérifier si ce remux ferait doublon'}</button>
+    <span class="muted">${h && h.busy ? 'Interrogation de HD-Forever…' : ''}</span></div>${body}`;
+}
+$('#hdfbox').addEventListener('click', async e => {
+  if (e.target.id === 'hdfmodo') {
+    if (confirm('As-tu vu sur la fiche HDF du remux existant la note modo « Remplacement autorisé » ?')) { S.hdf.modo = true; renderHdfBox(); }
+    return;
+  }
+  if (e.target.id !== 'hdfgo') return;
+  const refresh = !!(S.hdf && S.hdf.res);
+  S.hdf = {busy: true}; renderHdfBox();
+  try {
+    const res = await post('/api/hdf/lookup', {tmdb: S.tmdb ? S.tmdb.id : null, title: S.f.title || '', year: S.f.year || '', new: true, refresh,
+      releases: [{name: releaseName(), size: S.info.size || 0, approx: true, kind: 'remux'}]});
+    S.hdf = {res, tmdb: !!S.tmdb};
+  } catch (err) { S.hdf = {error: err.message}; }
+  renderHdfBox();
+});
+
+/* ---------------------------------------------------------------- TMDB */
+function initTmdb(info) {
+  S.tmdb = info.tmdb_id ? {id: info.tmdb_id, url: `https://www.themoviedb.org/movie/${info.tmdb_id}`} : null;
+  S.tmdbResults = [];
+  $('#tmdb').hidden = !cfg.tmdb;
+  $('#tq').value = info.title || ''; $('#ty').value = info.year || '';
+  renderTmdb();
+  if (cfg.tmdb && !S.tmdb && info.title) tmdbSearch(true);
+}
+async function tmdbSearch(auto) {
+  $('#tres').innerHTML = '<p class="muted" style="margin:0">Recherche sur TMDB…</p>';
+  try {
+    S.tmdbResults = await api(`/api/tmdb/search?q=${encodeURIComponent($('#tq').value)}&year=${encodeURIComponent($('#ty').value)}`
+      + `&langs=${encodeURIComponent([...new Set(S.tracks.filter(t => t.type === 'audio').map(t => t.language))].join(','))}`);
+    const first = S.tmdbResults[0];
+    // choix automatique seulement si la correspondance est nette (même année)
+    if (auto && first && (!$('#ty').value || first.year === $('#ty').value)) return tmdbPick(first);
+    renderTmdb();
+  } catch (e) { $('#tres').innerHTML = `<p class="error" style="margin:0">${esc(e.message)}</p>`; }
+}
+function tmdbTitleFor(r) { return r.original_language === 'fr' ? r.original_title : r.title; }
+function tmdbPick(r, title) {
+  S.tmdb = r;
+  S.f.title = title || tmdbTitleFor(r);
+  if (r.year) S.f.year = r.year;
+  applyOrigLang(r.original_language);
+  renderTmdb(); renderFields(); $('#cmd').hidden = true;
+}
+function renderTmdb() {
+  const t = S.tmdb;
+  $('#tlink').innerHTML = t ? `<a href="${esc(t.url)}" target="_blank" rel="noopener">Fiche TMDB</a> <button class="btn small" id="tcopy">Copier le lien</button>` : '';
+  if (t && t.title !== undefined && !S.tmdbOpen) {
+    const both = t.original_title && t.title && t.original_title !== t.title;
+    $('#tres').innerHTML = `<div class="tm sel">${t.poster ? `<img src="${esc(t.poster)}" alt="">` : '<span class="ph"></span>'}
+      <div><b>${esc(t.title)}</b> (${esc(t.year)})<small>Titre original : ${esc(t.original_title)}, langue ${esc(t.original_language)}</small></div></div>
+      <div class="pick">${both ? `<button class="btn small" data-tt="o">Titre original : ${esc(t.original_title)}</button>
+        <button class="btn small" data-tt="f">Titre français : ${esc(t.title)}</button>` : ''}
+        ${S.tmdbResults.length > 1 ? `<button class="btn small" data-tt="list">Autres résultats (${S.tmdbResults.length - 1})</button>` : ''}</div>`;
+    return;
+  }
+  if (!S.tmdbResults.length) { $('#tres').innerHTML = t ? '' : '<p class="muted" style="margin:0">Aucun film choisi.</p>'; return; }
+  $('#tres').innerHTML = S.tmdbResults.map((r, i) => `<div class="tm ${t && t.id === r.id ? 'sel' : ''}" data-ti="${i}">
+    ${r.poster ? `<img src="${esc(r.poster)}" alt="" loading="lazy">` : '<span class="ph"></span>'}
+    <div><b>${esc(r.title)}</b> (${esc(r.year || '?')})<small>${esc(r.original_title)}, langue ${esc(r.original_language)}</small></div></div>`).join('');
+}
+$('#tgo').onclick = () => { S.tmdbOpen = true; tmdbSearch(false); };
+$('#tq').addEventListener('keydown', e => { if (e.key === 'Enter') { S.tmdbOpen = true; tmdbSearch(false); } });
+$('#tmdb').addEventListener('click', async e => {
+  if (e.target.id === 'tcopy') { try { await navigator.clipboard.writeText(S.tmdb.url); toast('Lien copié.'); } catch { toast(S.tmdb.url); } return; }
+  const tt = e.target.dataset.tt;
+  if (tt === 'o') return tmdbPick(S.tmdb, S.tmdb.original_title);
+  if (tt === 'f') return tmdbPick(S.tmdb, S.tmdb.title);
+  if (tt === 'list') { S.tmdbOpen = true; return renderTmdb(); }
+  const row = e.target.closest('[data-ti]');
+  if (row) { S.tmdbOpen = false; tmdbPick(S.tmdbResults[+row.dataset.ti]); }
+});
+
+/* ---------------------------------------------------------------- 5. lancement */
+function trackSpecs() {
+  return S.tracks.map(t => ({id: t.id, number: t.number, type: t.type, keep: t.keep, language: t.language, name: t.name,
+    default: !!t.default, forced: !!t.forced, original: !!t.original}));
+}
+function torrentSpec() {
+  return {enabled: $('#t-on').checked, trackers: [...document.querySelectorAll('[data-tr]:checked')].map(c => c.dataset.tr),
+    piece_size: +($('#t-piece') || {}).value || 0, format: ($('#t-format') || {}).value};
+}
+function remuxSpec() {
+  return {source: S.info.source, release_name: releaseName(), tracks: trackSpecs(),
+    chapter_language: $('#o-chap').value, chapter_template: $('#o-chtpl').value.trim(), subs_no_compression: $('#o-comp').checked,
+    mediainfo: $('#o-nfo').checked, source_label: $('#o-srcl').value.trim(), tmdb_id: S.tmdb ? S.tmdb.id : null, hardlink: $('#o-link').checked, bdinfo_copy: $('#o-bdi').checked, cleanup_extract: true,
+    torrent: torrentSpec()};
+}
+function retouchSpec() {
+  return {source: S.info.source, release_name: releaseName(), tracks: trackSpecs(), chapter_language: $('#o-chap').value,
+    chapter_template: $('#o-chtpl').value.trim(), rename_chapters: true, mediainfo: $('#o-nfo').checked,
+    source_label: $('#o-srcl').value.trim(), tmdb_id: S.tmdb ? S.tmdb.id : null};
+}
+function retouchBlocker() {
+  if (S.tracks.some(t => !t.keep)) return 'Des pistes sont décochées : il faut un remux pour les retirer.';
+  if (S.tracks.map(t => t.id).join(',') !== S.order0) return "L'ordre des pistes a changé : il faut un remux.";
+  if ($('#o-comp').checked && S.tracks.some(t => t.type === 'subtitles' && t.compression))
+    return 'Sous-titres compressés : seule un remux peut retirer la compression (ou décoche « Sous-titres non compressés »).';
+  return '';
+}
+function renderGo() {
+  if (!S.info) return;
+  const ed = S.info.editable, block = ed ? retouchBlocker() : '';
+  $('#o-link').closest('label').hidden = ed;
+  $('#o-bdi').closest('label').hidden = ed;
+  $('#gobar').innerHTML = ed
+    ? `<button class="btn primary" data-act="retouch" ${block ? 'disabled' : ''}>Appliquer les retouches</button>
+       <button class="btn" data-act="preview-retouch" ${block ? 'disabled' : ''}>Voir la commande</button>
+       <button class="btn" data-act="remux">Remuxer vers un nouveau fichier</button>
+       <button class="btn" data-act="torrent">Créer le torrent seul</button>
+       <button class="btn" data-act="mediainfo">Afficher le MediaInfo</button>`
+    : `<button class="btn primary" data-act="remux">Lancer le remux</button>
+       <button class="btn" data-act="preview">Voir la commande</button>
+       <span class="muted">vers ${esc(cfg.paths.output)}/</span>`;
+  $('#reason').className = 'note' + (block ? ' warn' : '');
+  $('#reason').textContent = ed ? (block || "La retouche modifie le fichier en place, en quelques secondes. Si ce fichier est déjà en seed, son torrent ne sera plus valide.") : '';
+}
+['#o-comp'].forEach(id => $(id).addEventListener('change', renderGo));
+$('#gobar').addEventListener('click', async e => {
+  const a = e.target.dataset.act; if (!a) return;
+  e.target.disabled = true;
+  try {
+    if (a === 'remux') await launch('/api/jobs', remuxSpec(), 'Remux');
+    if (a === 'retouch') await launch('/api/retouch', retouchSpec(), 'Retouche');
+    if (a === 'torrent') await launch('/api/torrent', {path: S.info.source, torrent: torrentSpec()}, 'Torrent');
+    if (a === 'mediainfo') modal('MediaInfo', await api('/api/mediainfo?path=' + encodeURIComponent(S.info.source)
+      + '&label=' + encodeURIComponent($('#o-srcl').value.trim())), S.info.source.split('/').pop().replace(/\.mkv$/i, '') + '.nfo');
+    if (a === 'preview' || a === 'preview-retouch') {
+      const r = await post(a === 'preview' ? '/api/preview' : '/api/preview/retouch', a === 'preview' ? remuxSpec() : retouchSpec());
+      $('#cmd').hidden = false; $('#cmd').textContent = r.command + (r.exists ? '\n\n⚠ Ce fichier existe déjà : le lancement sera refusé.' : '');
+    }
+  } catch (err) { toast(err.message, true); }
+  finally { renderGo(); }
+});
+
+function trackerChecks(attr) {
+  const trs = (cfg.torrent || {}).trackers || [];
+  return trs.map(t => `<label><input type="checkbox" ${attr}="${esc(t.name)}" ${t.enabled !== false ? 'checked' : ''}> ${esc(t.name)}${t.source ? ` <span class="muted">(source ${esc(t.source)})</span>` : ''}</label>`).join('')
+    || '<span class="muted">Aucun tracker dans config.yml.</span>';
+}
+function pieceSelect(id) {
+  const tc = cfg.torrent || {};
+  return `<label>Pièces <select id="${id}">${PIECES.map(([v, l]) => `<option value="${v}" ${v === (tc.piece_size || 0) ? 'selected' : ''}>${l}</option>`).join('')}</select></label>`;
+}
+function renderTorrentBox() {
+  const tc = cfg.torrent || {};
+  $('#t-on').checked = !!tc.enabled;
+  if (!cfg.qbittorrent.configured) { $('#tdetail').innerHTML = '<p class="note">qBittorrent n\'est pas configuré dans config.yml.</p>'; return; }
+  $('#tdetail').innerHTML = `<div class="row">${trackerChecks('data-tr')}</div>
+    <div class="row" style="margin-top:.6rem">
+      ${pieceSelect('t-piece')}
+      <label>Format <select id="t-format">${['v1','v2','hybrid'].map(f => `<option ${f === (tc.format || 'v1') ? 'selected' : ''}>${f}</option>`).join('')}</select></label>
+      <button class="btn small" id="t-test">Tester qBittorrent</button><span id="t-res" class="muted"></span>
+    </div>
+    <p class="note">Le .torrent est enregistré à côté du MKV, et le seed démarre dans qBittorrent (${esc(cfg.qbittorrent.url)}).</p>`;
+  $('#t-test').onclick = async () => { $('#t-res').textContent = 'Test…';
+    const r = await api('/api/qbt/test'); $('#t-res').textContent = r.ok ? `Connecté, qBittorrent ${r.version}` : r.error;
+    $('#t-res').className = r.ok ? '' : 'error'; };
+}
+
+/* ---------------------------------------------------------------- repost : inventaire et règles */
+const R = {inv: null, rules: null, cur: null, sel: null, started: false,
+  hideDone: (() => { try { return localStorage.getItem('pm.rHideDone') !== '0'; } catch { return true; } })()};
+const RFIELDS = {
+  name: {label: 'Nom des torrents', type: 'text'},
+  title: {label: 'Titre', type: 'text'},
+  tracker: {label: 'Tracker', type: 'tracker'},
+  category: {label: 'Catégorie qBittorrent', type: 'list'},
+  kind: {label: 'Type', type: 'list'},
+  rk: {label: 'Catégorie HDF', type: 'list'},
+  hdf: {label: 'Statut HDF', type: 'list'},
+  size: {label: 'Taille (Go)', type: 'num'},
+};
+const ROPS = {text: [['has', 'contient'], ['nhas', 'ne contient pas']], list: [['is', 'est'], ['isnt', "n'est pas"]],
+  tracker: [['on', 'en seed sur'], ['off', 'pas en seed sur'], ['only', 'seulement sur']],
+  num: [['gt', 'supérieure à'], ['lt', 'inférieure à']]};
+const HDF_LAB = {none: 'Non vérifié', absent: 'Pas de doublon', dupe: 'Doublon sur HDF', allowed: 'Doublon toléré',
+  identical: 'Identique sur HDF', crossseeded: 'Cross-seedé', job: 'Repost lancé', similar: 'À revérifier',
+  reseed: 'Identique sans seeder : à reseeder', replaceable: 'Doublon sans seeder : à vérifier',
+  review: 'Même catégorie sur HDF : à arbitrer', refused: 'WEBRip : refusé', unknown: 'Catégorie à choisir'};
+// catégories HDF (clés de REL_KINDS côté serveur) ; webrip et « » ne sont pas repostables
+const RK_LAB = {original: 'Blu-ray Original', remux: 'Blu-ray Remux', rip: 'Blu-ray Rip', mhd: 'mHD', webdl: 'WEB-DL',
+  webrip: 'WEBRip (refusé)', '': 'Indéterminée'};
+const KIND_LAB = {movie: 'Film (Radarr)', orphan: 'Hors *arr'};
+// même règle que Nettoyarr : nom saisi dans sa config, sinon Prowlarr, sinon domaine sans sous-domaine ni extension
+function autoTracker(h) {
+  if (!h || h === '?' || /^[\d.]+$/.test(h)) return h || '?';
+  const p = h.split('.'), b = p.length >= 2 ? p[p.length - 2] : p[0];
+  return b.charAt(0).toUpperCase() + b.slice(1);
+}
+const trName = h => (R.inv && (R.inv.tracker_names[h] || R.inv.prowlarr_names[h])) || autoTracker(h);
+const hdfState = r => r.job && !['failed', 'cancelled', 'interrupted'].includes(r.job.status) ? 'job' : (r.hdf || 'none');
+const defaultRules = () => ({match: 'all', rules: [{f: 'rk', op: 'isnt', v: 'webrip'}, {f: 'rk', op: 'isnt', v: 'none'},
+  ...(cfg.repost.hdf_host ? [{f: 'tracker', op: 'off', v: cfg.repost.hdf_host}] : [])]});
+
+function rOptions(f) {
+  const rels = R.inv ? R.inv.releases : [];
+  if (f === 'kind') return Object.entries(KIND_LAB);
+  if (f === 'rk') return Object.entries(RK_LAB).map(([k, l]) => [k || 'none', l]);
+  if (f === 'hdf') return Object.entries(HDF_LAB);
+  if (f === 'category') return [...new Set(rels.flatMap(r => r.category))].sort().map(c => [c, c]);
+  if (f === 'tracker') {  // un choix par tracker (nom) ; la valeur enregistrée est une de ses adresses
+    const by = {};
+    rels.flatMap(r => r.trackers.map(t => t.host)).concat(cfg.repost.hdf_host ? [cfg.repost.hdf_host] : [])
+      .forEach(h => { if (h && !(trName(h) in by)) by[trName(h)] = h; });
+    return Object.entries(by).map(([n, h]) => [h, n]).sort((a, b) => a[1].localeCompare(b[1], 'fr'));
+  }
+  return [];
+}
+// true / false, ou null si la règle est incomplète (une ligne en cours de saisie ne vide pas la liste)
+function testRule(r, x) {
+  const def = RFIELDS[x.f]; if (!def || x.v === '' || x.v == null) return null;
+  if (def.type === 'text') {
+    const txt = x.f === 'title' ? r.title : [r.name, ...r.trackers.map(t => t.name)].join('\n');
+    const hit = txt.toLowerCase().includes(String(x.v).toLowerCase());
+    return x.op === 'nhas' ? !hit : hit;
+  }
+  if (def.type === 'num') {
+    const n = Number(String(x.v).replace(',', '.')); if (isNaN(n)) return null;
+    return x.op === 'gt' ? r.size / 1e9 > n : r.size / 1e9 < n;
+  }
+  const vals = x.f === 'tracker' ? r.trackers.map(t => trName(t.host)) : x.f === 'category' ? r.category
+    : x.f === 'kind' ? [r.kind] : x.f === 'rk' ? [r.rk || 'none'] : [hdfState(r)];
+  const want = x.f === 'tracker' ? trName(x.v) : x.v;
+  if (x.op === 'only') return vals.length > 0 && vals.every(v => v === want);
+  const hit = vals.includes(want);
+  return x.op === 'isnt' || x.op === 'off' ? !hit : hit;
+}
+function evalNode(r, node) {
+  const res = node.rules.map(x => x.rules ? evalNode(r, x) : testRule(r, x)).filter(v => v !== null);
+  if (!res.length) return null;
+  return node.match === 'any' ? res.some(Boolean) : res.every(Boolean);
+}
+function ruleRow(x, path) {
+  const type = (RFIELDS[x.f] || RFIELDS.name).type;
+  const f = `<select data-rf="${path}" aria-label="Champ">${Object.entries(RFIELDS).map(([k, d]) => `<option value="${k}" ${k === x.f ? 'selected' : ''}>${d.label}</option>`).join('')}</select>`;
+  const o = `<select data-ro="${path}" aria-label="Condition">${ROPS[type].map(([k, l]) => `<option value="${k}" ${k === x.op ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+  const v = type === 'list' || type === 'tracker'
+    ? `<select data-rv="${path}" aria-label="Valeur"><option value="">—</option>${rOptions(x.f).map(([k, l]) => `<option value="${esc(k)}" ${k === x.v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`
+    : `<input type="text" data-rv="${path}" value="${esc(x.v)}" aria-label="Valeur"${type === 'num' ? ' inputmode="decimal" style="max-width:8rem"' : ''}>`;
+  return `<div class="rrow">${f}${o}${v}<button class="btn small rdel" data-rdel="${path}" aria-label="Supprimer la règle">✕</button></div>`;
+}
+const matchSel = (node, path) => `<select data-rm="${path}" aria-label="Combinaison"><option value="all" ${node.match === 'all' ? 'selected' : ''}>toutes</option><option value="any" ${node.match === 'any' ? 'selected' : ''}>au moins une</option></select>`;
+function renderRules() {
+  const body = R.rules.rules.map((x, i) => x.rules
+    ? `<div class="rgroup"><div class="rhead">Groupe : ${matchSel(x, String(i))} des règles <button class="btn small rdel" data-rdel="${i}" aria-label="Supprimer le groupe">✕</button></div>
+       ${x.rules.map((y, j) => ruleRow(y, `${i}.${j}`)).join('')}<div class="rtools"><button class="btn small" data-radd="${i}">+ Règle</button></div></div>`
+    : ruleRow(x, String(i))).join('');
+  $('#rules').innerHTML = `<div class="rhead">Releases qui remplissent ${matchSel(R.rules, '')} des règles suivantes</div>${body}
+    <div class="rtools"><button class="btn small" data-radd="">+ Règle</button><button class="btn small" data-rgrp="1">+ Groupe</button>
+    <button class="btn small" data-rreset="1">Règles par défaut</button></div>`;
+}
+const nodeAt = p => p === '' ? R.rules : R.rules.rules[+p];
+function ruleAt(p) { const [i, j] = p.split('.'); return j === undefined ? R.rules.rules[+i] : R.rules.rules[+i].rules[+j]; }
+function rulesChanged(rerender) { if (rerender) renderRules(); renderList();
+  clearTimeout(R.saveT); R.saveT = setTimeout(() => post('/api/repost/rules', R.rules).catch(e => toast(e.message, true)), 600); }
+$('#rules').addEventListener('change', e => {
+  const d = e.target.dataset;
+  if (d.rm !== undefined) { nodeAt(d.rm).match = e.target.value; return rulesChanged(false); }
+  if (d.rf !== undefined) { const x = ruleAt(d.rf); x.f = e.target.value; x.op = ROPS[RFIELDS[x.f].type][0][0]; x.v = ''; return rulesChanged(true); }
+  if (d.ro !== undefined) { ruleAt(d.ro).op = e.target.value; return rulesChanged(false); }
+  if (d.rv !== undefined && e.target.tagName === 'SELECT') { ruleAt(d.rv).v = e.target.value; return rulesChanged(false); }
+});
+$('#rules').addEventListener('input', e => {
+  const d = e.target.dataset;
+  if (d.rv !== undefined && e.target.tagName === 'INPUT') { ruleAt(d.rv).v = e.target.value; rulesChanged(false); }
+});
+$('#rules').addEventListener('click', e => {
+  const d = e.target.dataset;
+  if (d.radd !== undefined) { nodeAt(d.radd).rules.push({f: 'name', op: 'has', v: ''}); return rulesChanged(true); }
+  if (d.rgrp) { R.rules.rules.push({match: 'any', rules: [{f: 'name', op: 'has', v: ''}]}); return rulesChanged(true); }
+  if (d.rreset) { R.rules = defaultRules(); return rulesChanged(true); }
+  if (d.rdel !== undefined) { const [i, j] = d.rdel.split('.');
+    if (j === undefined) R.rules.rules.splice(+i, 1); else R.rules.rules[+i].rules.splice(+j, 1);
+    return rulesChanged(true); }
+});
+
+function renderList() {
+  if (!R.inv) return;
+  // déjà faite : repost terminé ou cross-seedée
+  const isDone = r => (r.job && ['done', 'warning'].includes(r.job.status)) || r.hdf === 'crossseeded';
+  const masked = r => r.masked || (R.hideDone && isDone(r));
+  const matching = R.inv.releases.filter(r => evalNode(r, R.rules) !== false).sort((a, b) => a.title.localeCompare(b.title, 'fr'));
+  const nMasked = matching.filter(masked).length;
+  const list = (R.showMasked ? matching : matching.filter(r => !masked(r))).filter(r => qMatch(R.q, r.title, r.name, ...r.trackers.map(t => t.name)));
+  // releases inutilisables (incomplètes…) : mêmes règles que la liste, montrées à part avec leur raison
+  const hid = (R.inv.hidden_list || []).filter(r => evalNode(r, R.rules) !== false && qMatch(R.q, r.title, r.name)).sort((a, b) => a.title.localeCompare(b.title, 'fr'));
+  $('#rcount').innerHTML = esc(`${list.length} release(s) sur ${R.inv.releases.length} — ${gb(list.reduce((s, r) => s + r.size, 0)) || '0 Go'}`
+    + (hid.length ? ` · ${hid.length} inutilisable(s) masquée(s)` : ''))
+    + ` · <label><input type="checkbox" data-rhidedone="1" ${R.hideDone ? 'checked' : ''}> masquer les déjà faites</label>`
+    + (nMasked ? ` · <a href="#" class="lnk" data-rshowmasked="1">${R.showMasked ? 'cacher' : 'afficher'} les ${nMasked} masquée(s)</a>` : '');
+  const wasOpen = !!$('#rhidden details[open]');
+  $('#rhidden').innerHTML = hid.length ? `<details${wasOpen ? ' open' : ''}><summary class="muted">Voir les ${hid.length} release(s) masquée(s)</summary>
+    <table><tbody>${hid.map(h => `<tr><td><b>${esc(h.title)}</b><small>${esc(h.name)}</small></td>
+      <td class="num">${gb(h.size)}</td><td><span class="hs hs-dead">${esc(h.why)}</span></td></tr>`).join('')}</tbody></table></details>` : '';
+  const todo = R.bulkAll ? list : list.filter(r => hdfState(r) === 'none');
+  R.bulkList = todo;
+  $('#rbulk').innerHTML = !cfg.repost.hdf_api || !list.length ? '' : `
+    <button class="btn small" id="rbulkgo" ${R.bulkBusy || !todo.length ? 'disabled' : ''}>${R.bulkBusy ? 'Vérification en cours…' : `Vérifier ${todo.length} release(s) sur HDF`}</button>
+    <label class="muted"><input type="checkbox" id="rbulkall" ${R.bulkAll ? 'checked' : ''}> y compris celles déjà vérifiées</label>
+    <span class="muted">~10 s par film (API HDF) · résultats dans la colonne HDF, filtrables par « Statut HDF »</span>`;
+  $('#rlist').innerHTML = list.length ? `<table><thead><tr><th>Release</th><th class="num">Taille</th><th>Trackers</th><th>HDF</th><th></th></tr></thead><tbody>
+    ${list.map(r => { const st = hdfState(r);
+      return `<tr data-rel="${esc(r.id)}" class="${R.sel === r.id ? 'sel' : ''}"${masked(r) ? ' style="opacity:.5"' : ''}><td><b>${esc(r.title)}</b> <span class="hs">${esc(RK_LAB[r.rk || ''])}</span><small>${esc(r.name)}</small></td>
+        <td class="num">${gb(r.size)}</td><td>${esc([...new Set(r.trackers.map(t => trName(t.host)))].join(', '))}</td>
+        <td><span class="hs hs-${st}">${HDF_LAB[st]}</span></td>
+        <td><button class="btn small rdel" data-rmask="${esc(r.id)}">${r.masked ? 'Réafficher' : 'Masquer'}</button></td></tr>`; }).join('')}</tbody></table>`
+    : `<p class="muted">${R.q ? 'Aucune release ne correspond à la recherche.' : 'Aucune release ne remplit ces règles.'}</p>`;
+}
+$('#rlist').addEventListener('click', e => {
+  if (e.target.dataset.rmask) return toggleRMask(e.target.dataset.rmask);
+  const tr = e.target.closest('[data-rel]'); if (tr) openRelease(tr.dataset.rel);
+});
+async function toggleRMask(id) {
+  const r = R.inv && R.inv.releases.find(x => String(x.id) === id); if (!r) return;
+  try { await post('/api/repost/mask', {hashes: r.hashes, masked: !r.masked}); r.masked = !r.masked; renderList(); }
+  catch (err) { toast(err.message, true); }
+}
+$('#rcount').addEventListener('click', e => {
+  if (e.target.dataset.rhidedone) { R.hideDone = e.target.checked;
+    try { localStorage.setItem('pm.rHideDone', R.hideDone ? '1' : '0'); } catch {} return renderList(); }
+  if (e.target.dataset.rshowmasked) { e.preventDefault(); R.showMasked = !R.showMasked; renderList(); }
+});
+$('#rbulk').addEventListener('click', async e => {
+  if (e.target.id === 'rbulkall') { R.bulkAll = e.target.checked; return renderList(); }
+  if (e.target.id !== 'rbulkgo') return;
+  const n = R.bulkList.length;
+  if (n > 30 && !confirm(`${n} releases à vérifier : environ ${Math.ceil(n * 10.5 / 60)} min (cadence de l'API HDF). Lancer ?`)) return;
+  const r = await launch('/api/repost/checkall', {releases: R.bulkList.map(x => x.hashes), refresh: !!R.bulkAll}, 'Vérification HDF');
+  if (r) { R.bulkBusy = true; renderList(); }
+});
+async function loadChecks() {
+  try {
+    const ch = await api('/api/repost/checks');
+    let dirty = false;
+    [...R.inv.releases, ...(R.inv.hidden_list || [])].forEach(r => {
+      const c = r.hashes.map(h => ch[h]).find(Boolean);
+      if (c && c.status !== r.hdf) { r.hdf = c.status; r.hdf_at = c.at; dirty = true; }
+    });
+    if (dirty || !R.bulkBusy) renderList();
+  } catch {}
+}
+
+async function loadInventory() {
+  $('#invsub').textContent = 'lecture de Nettoyarr…';
+  try {
+    const d = await api('/api/repost/inventory');
+    if (d.state === 'building') { $('#invsub').textContent = 'Nettoyarr construit son inventaire…'; return pollInventory(d.job_id); }
+    if (d.state !== 'ready') {
+      R.inv = null; $('#rlist').innerHTML = ''; $('#rcount').textContent = '';
+      $('#invsub').textContent = d.error ? 'Nettoyarr : ' + d.error : 'inventaire Nettoyarr vide : actualise-le';
+      return;
+    }
+    R.inv = d;
+    $('#invsub').textContent = 'inventaire Nettoyarr du ' + new Date(d.built_at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'});
+    $('#rwarn').innerHTML = d.warnings.length ? `<p class="note warn">${d.warnings.map(esc).join('<br>')}</p>` : '';
+    if (!R.rules) { const saved = await api('/api/repost/rules'); R.rules = saved && Array.isArray(saved.rules) ? saved : defaultRules(); }
+    renderRules(); renderList();
+  } catch (e) { $('#invsub').textContent = ''; $('#rlist').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+async function pollInventory(id) {
+  if (!id) return setTimeout(loadInventory, 3000);
+  try {
+    const j = await api('/api/repost/inventory/job?id=' + encodeURIComponent(id));
+    if (j.state !== 'done') {
+      $('#inv-prog').textContent = (j.step || '') + (j.percent != null ? ` ${j.percent} %` : '');
+      return setTimeout(() => pollInventory(id), 1500);
+    }
+    $('#inv-prog').textContent = ''; $('#inv-refresh').disabled = false;
+    if (j.result && j.result.ok === false) toast('Nettoyarr : ' + j.result.error, true);
+    loadInventory();
+  } catch (e) { $('#inv-prog').textContent = e.message; $('#inv-refresh').disabled = false; }
+}
+$('#inv-refresh').onclick = async () => {
+  $('#inv-refresh').disabled = true; $('#inv-prog').textContent = 'Démarrage…';
+  try { const r = await post('/api/repost/inventory/refresh', {}); pollInventory(r.job_id); }
+  catch (e) { $('#inv-prog').textContent = ''; $('#inv-refresh').disabled = false; toast(e.message, true); }
+};
+function startRepost() {
+  if (!cfg.repost.nettoyarr) {
+    $('#invsub').textContent = ''; $('#inv-refresh').disabled = true;
+    $('#rlist').innerHTML = '<p class="note warn">Nettoyarr n\'est pas configuré : ajoute <code>repost.nettoyarr_url</code> dans config.yml, puis redémarre.</p>';
+    return;
+  }
+  loadInventory();
+}
+
+/* ---------------------------------------------------------------- repost : vérification et upload */
+// Verdicts : m = « Média » HDF de la release vérifiée (Blu-ray Remux, WEB-DL…)
+const VERDICT = {
+  absent: ['ok', m => `Aucun ${m} de même résolution sur HDF : tu peux l'uploader.`],
+  dupe: ['bad', m => `Doublon : un ${m} de même résolution, de taille proche et avec les mêmes langues existe déjà. Repost interdit.`],
+  allowed: ['warn', m => `Un ${m} équivalent existe, mais c'est une release HDForever : elle reste postable.`],
+  review: ['warn', m => `Un ${m} de même résolution est déjà sur HDF (voir « À arbitrer ») : HDF n'en admet un autre que s'il diffère (langues, qualité). À toi de juger.`],
+  similar: ['warn', () => 'Vérification faite avec l\'ancienne règle : revérifie.'],
+  identical: ['bad', () => 'Déjà sur HD-Forever à l\'identique : cross-seede-la plutôt que de la reposter.'],
+  reseed: ['ok', () => 'La même release est sur HD-Forever, mais sans seeder : remets-la en seed.'],
+  replaceable: ['warn', () => 'Le doublon n\'a plus de seeder, mais ça ne suffit pas : le remplacement n\'est autorisé que si sa fiche HDF porte la note modo « Remplacement autorisé » (inactif depuis plus de 2 mois, reseed demandé sans succès depuis 7 jours). Vérifie-la avant de débloquer l\'upload.'],
+  crossseeded: ['ok', () => 'Cross-seedée : le torrent HDF est dans qBittorrent, qui revérifie les données.'],
+};
+const KIND_HDF = {identical: 'Identique', dupe: 'Doublon', review: 'À arbitrer', same: 'Même catégorie', remux: 'Remux', other: 'Autre'};
+const relOf = id => R.inv && R.inv.releases.find(x => x.id === id);
+
+async function openRelease(id, kind) {
+  const r = relOf(id); if (!r) return;
+  R.sel = id; renderList();
+  $('#r2').hidden = false; $('#r2sub').textContent = r.title;
+  $('#rdetail').innerHTML = '<p class="muted">Lecture du torrent dans qBittorrent…</p>';
+  try {
+    R.cur = {...await post('/api/repost/release', {hashes: r.hashes, kind: kind || ''}), rel: r};
+    renderDetail();
+    if (!kind) $('#r2').scrollIntoView({behavior: 'smooth', block: 'start'});
+  } catch (e) { R.cur = null; $('#rdetail').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+function renderCheck(chk) {
+  const [cls, msg] = VERDICT[chk.status] || ['', () => ''];
+  const rows = chk.items.map(i => `<tr><td><span class="hs hs-${i.kind === 'other' ? 'none' : i.kind}">${KIND_HDF[i.kind]}</span></td>
+    <td>${i.url ? `<a class="lnk" href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.group)}</a>` : esc(i.group)} ${i.year ? `(${esc(i.year)})` : ''}<small>${esc(i.name)}${i.why ? ' — ' + esc(i.why) : ''}</small></td>
+    <td>${esc([i.media, i.encoding, i.format].filter(Boolean).join(' · '))}</td><td class="num">${gb(i.size)}</td>
+    <td class="num">${i.dead ? '<span class="hs hs-dead">0 seeder</span>' : i.seeders ?? ''}</td>
+    <td>${i.crossseed && chk.status !== 'crossseeded' ? `<button class="btn small" data-cross="${i.id}">${i.dead ? 'Remettre en seed' : 'Cross-seeder'}</button>` : ''}</td></tr>`).join('');
+  return `<p class="verdict ${cls}">${esc(msg(chk.media || 'Blu-ray Remux'))}</p>
+    ${chk.quick ? '<p class="note">Vérification rapide (bouton de la liste) : « Revérifier » ajoute la recherche par nom de fichier, qui trouve aussi une copie identique rangée sous un autre film.</p>' : ''}
+    ${chk.res === '' ? '<p class="note warn">Résolution absente du nom : les releases HDF de toutes résolutions ont été comparées.</p>' : ''}
+    ${chk.with_tmdb ? '' : '<p class="note warn">Sans film TMDB, seuls les doublons exacts (nom de la release) ont été cherchés.</p>'}
+    ${rows ? `<div class="scroll"><table><thead><tr><th></th><th>Sur HDF</th><th>Média</th><th class="num">Taille</th><th class="num">Seeders</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>` : ''}`;
+}
+function renderUpload() {
+  const c = R.cur, st = c.check && c.check.status, job = c.job;
+  const what = c.disc_dir ? 'Le dossier du disque' : c.disc ? "L'ISO" : 'Le MKV';
+  let action;
+  if (job && !['failed', 'cancelled', 'interrupted'].includes(job.status))
+    action = `<p class="note">Repost déjà lancé : job #${job.id}. Une fois terminé, le bouton « Uploader sur… » du job ouvre HD-Forever.</p>`;
+  else if (c.series) action = '<p class="note warn">Les séries ne sont pas prises en charge dans cette version.</p>';
+  else if (c.kind === 'webrip') action = '<p class="note warn">WEBRip : refusé sur HD-Forever.</p>';
+  else if (!c.kinds[c.kind]) action = '<p class="note warn">Choisis d\'abord la catégorie de la release.</p>';
+  else if (!c.exists) action = `<p class="note warn">${what} est introuvable dans le conteneur : vérifie <code>qbittorrent.path_map</code> dans config.yml.</p>`;
+  else if (!st) action = '<p class="note">Vérifie d\'abord la release sur HD-Forever.</p>';
+  else if (st === 'identical' || st === 'crossseeded' || st === 'reseed') action = '<p class="note">Rien à uploader : la release est déjà sur HD-Forever.</p>';
+  else if (st === 'dupe' || st === 'similar') action = '<p class="note">Upload bloqué : doublon sur HD-Forever.</p>';
+  else if (st === 'replaceable' && !c.forceOk) action = `<p class="note">Upload bloqué tant que la fiche HDF du doublon n'autorise pas le remplacement.</p>
+      <div class="row"><button class="btn" id="rrepl">La fiche indique « Remplacement autorisé »</button></div>`;
+  else if (st === 'review' && !c.forceOk) action = `<p class="note">Upload en attente de ton arbitrage : compare avec les releases « À arbitrer » (langues, qualité).</p>
+      <div class="row"><button class="btn" id="rrev">Elle apporte quelque chose : uploader quand même</button></div>`;
+  else action = `<div class="row">${trackerChecks('data-rtr')}</div>
+      <div class="row" style="margin-top:.6rem">${pieceSelect('rt-piece')}
+        <button class="btn primary" id="rgo">Créer le torrent pour HDF</button></div>
+      ${st === 'replaceable' ? '<p class="note warn">Remplacement d\'un doublon mort : signale l\'ancien torrent sur HDF (« Merci de le signaler pour suppression ») après l\'upload.</p>' : ''}
+      <p class="note">Torrent créé sur ${c.disc_dir ? 'le dossier complet du disque' : c.disc ? "l'ISO" : 'le fichier'} existant, sans le modifier, puis seedé${cfg.repost.category ? ` (catégorie « ${esc(cfg.repost.category)} », gestion manuelle)` : ''}. ${c.disc ? 'Le BDInfo est lancé d\'abord (lecture complète du disque, plusieurs minutes)' : 'Le MediaInfo s\'affiche à la fin'} ; le bouton « Uploader sur… » du job remplit ensuite le formulaire de HDF.</p>`;
+  $('#rup').innerHTML = `<h3>Upload</h3>${action}`;
+}
+function kindSelect(c) {
+  if (c.disc) return `<span class="hs">${esc(c.kinds.original)}</span>`;
+  const keys = Object.keys(c.kinds).filter(k => k !== 'original');
+  return `<select id="rkind" aria-label="Catégorie HDF">${c.kinds[c.kind] ? '' : `<option value="" selected>${c.kind === 'webrip' ? 'WEBRip (refusé)' : 'Indéterminée'}</option>`}
+    ${keys.map(k => `<option value="${k}" ${k === c.kind ? 'selected' : ''}>${esc(c.kinds[k])}</option>`).join('')}</select>
+    ${c.kind !== c.kind_detected && c.kinds[c.kind] ? '<span class="muted">choisie à la main</span>' : ''}`;
+}
+function renderDetail() {
+  const c = R.cur;
+  const opts = c.tmdb_results.map(t => `<option value="${t.id}" ${t.id === c.tmdb_id ? 'selected' : ''}>${esc(t.title)} (${esc(t.year || '?')})${t.original_title && t.original_title !== t.title ? ' · ' + esc(t.original_title) : ''}</option>`).join('');
+  const inList = c.tmdb_results.some(t => t.id === c.tmdb_id);
+  const at = c.check && c.check.at ? new Date(c.check.at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'}) : '';
+  const renamed = c.kind === 'remux' && c.clean !== c.stem;
+  const ext = c.disc_dir ? '' : c.disc ? '.iso' : '.mkv';
+  $('#rdetail').innerHTML = `<div class="rel-name">${esc(c.clean)}<span class="muted">${ext}</span></div>
+    <p class="note">${gb(c.size)} · ${c.folder && !c.disc ? 'release en dossier : seul le MKV sera uploadé · ' : ''}${c.disc_dir ? 'disque complet : tout le dossier sera uploadé · ' : ''}${esc(c.qbt_path)}</p>
+    <div class="row" style="margin:.4rem 0">Catégorie HDF : ${kindSelect(c)}</div>
+    ${renamed ? `<p class="note warn">Nom nettoyé (accents, apostrophes) : le torrent portera sur un hardlink renommé dans ${esc(cfg.repost.link_dir)}, le fichier d'origine garde son nom.</p>` : ''}
+    ${c.kind !== 'remux' && c.kinds[c.kind] ? '<p class="note">Hors remux, la release garde son nom d\'origine.</p>' : ''}
+    ${c.series ? '<p class="note warn">Nom de série : non pris en charge dans cette version.</p>' : ''}
+    <div class="box" style="margin-top:1rem"><h3>Film TMDB</h3>
+      <div class="row">${opts ? `<select id="rtm">${opts}<option value="" ${c.tmdb_id && !inList ? 'selected' : ''}>Autre (ID ci-contre)</option></select>` : ''}
+        <input type="text" id="rtid" placeholder="ID TMDB" value="${c.tmdb_id || ''}" style="width:7rem" inputmode="numeric">
+        <span id="rtlink">${c.tmdb_id ? `<a class="lnk" href="https://www.themoviedb.org/movie/${c.tmdb_id}" target="_blank" rel="noopener">Fiche TMDB</a>` : ''}</span></div>
+      ${cfg.tmdb ? '' : '<p class="note">Clé TMDB absente : saisis l\'ID à la main.</p>'}</div>
+    <div class="box"><h3>Sur HD-Forever</h3>
+      ${!c.kinds[c.kind] ? '<p class="note">Vérification possible une fois la catégorie choisie (WEBRip exclu).</p>'
+        : cfg.repost.hdf_api ? `<div class="row"><button class="btn" id="rchk">${c.check ? 'Revérifier' : 'Vérifier sur HDF'}</button>
+        <span class="muted" id="rchkst">${at ? 'vérifié le ' + at : 'jusqu\'à ~20 s : l\'API de HDF limite à 6 requêtes par minute'}</span></div>`
+        : '<p class="note warn">Clé API HD-Forever absente : ajoute HDF_API_KEY dans stackmux/.env.</p>'}
+      <div id="rres">${c.check ? renderCheck(c.check) : ''}</div></div>
+    <div class="box" id="rup"></div>`;
+  renderUpload();
+}
+function setTmdb(id) {
+  R.cur.tmdb_id = id || null;
+  $('#rtlink').innerHTML = id ? `<a class="lnk" href="https://www.themoviedb.org/movie/${id}" target="_blank" rel="noopener">Fiche TMDB</a>` : '';
+}
+$('#rdetail').addEventListener('change', e => {
+  if (e.target.id === 'rtm') { $('#rtid').value = e.target.value; setTmdb(+e.target.value || null); }
+  if (e.target.id === 'rkind' && e.target.value) openRelease(R.cur.rel.id, e.target.value);  // la vérification est à refaire
+});
+$('#rdetail').addEventListener('input', e => {
+  if (e.target.id === 'rtid') { const n = parseInt(e.target.value, 10); setTmdb(n > 0 ? n : null);
+    if ($('#rtm')) $('#rtm').value = R.cur.tmdb_results.some(t => t.id === n) ? String(n) : ''; }
+});
+$('#rdetail').addEventListener('click', async e => {
+  const c = R.cur; if (!c) return;
+  const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'rchk') {
+    b.disabled = true; $('#rchkst').textContent = 'Interrogation de HD-Forever…';
+    try {
+      c.check = await post('/api/repost/check', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, kind: c.kind});
+      c.forceOk = false; c.rel.hdf = c.check.status; renderDetail(); renderList();
+    } catch (err) { b.disabled = false; $('#rchkst').textContent = ''; toast(err.message, true); }
+  }
+  if (b.dataset.cross) {
+    if (!confirm('Ajouter le torrent HD-Forever dans qBittorrent, sur ces données ? Il est ajouté arrêté, vérifié, et ne démarre qu\'à 100 % identique.')) return;
+    b.disabled = true;
+    try {
+      const r = await post('/api/repost/crossseed', {hashes: c.rel.hashes, torrent_id: +b.dataset.cross});
+      b.textContent = `Job #${r.id}`; refreshJobs();
+      toast(`Cross-seed lancé (job #${r.id}) : vérification des données par qBittorrent.`);
+    } catch (err) { b.disabled = false; toast(err.message, true); }
+  }
+  if (b.id === 'rrepl') {
+    if (!confirm('As-tu vu sur la fiche HDF du doublon la note modo « Remplacement autorisé » ?')) return;
+    c.forceOk = true; return renderUpload();
+  }
+  if (b.id === 'rrev') {
+    if (!confirm('Cette release diffère-t-elle bien de celles déjà sur HDF (langues, qualité) ?')) return;
+    c.forceOk = true; return renderUpload();
+  }
+  if (b.id === 'rgo') {
+    b.disabled = true;
+    const torrent = {enabled: true, trackers: [...document.querySelectorAll('[data-rtr]:checked')].map(x => x.dataset.rtr),
+      piece_size: +$('#rt-piece').value || 0, format: (cfg.torrent || {}).format || 'v1'};
+    const r = await launch('/api/repost/upload', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, torrent, force: !!c.forceOk}, 'Repost');
+    if (r) { c.job = c.rel.job = {id: r.id, status: 'queued'}; renderUpload(); renderList(); } else b.disabled = false;
+  }
+});
+
+/* ---------------------------------------------------------------- jobs */
+const STATUS = {queued: 'En attente', running: 'En cours', done: 'Terminé', warning: 'Terminé avec avertissements',
+  failed: 'Échec', cancelled: 'Annulé', interrupted: 'Interrompu'};
+const SEED = {waiting: ['Seed : reannounce en cours', 'running'], ok: ['Seed : tracker OK', 'done'],
+  timeout: ['Seed : toujours refusé par le tracker', 'failed'], absent: ['Seed : torrent absent de qBittorrent', 'failed']};
+const KIND = {remux: 'Remux', retouch: 'Retouche', bdinfo: 'BDInfo', extract: 'Extraction ISO', torrent: 'Torrent', repost: 'Repost', crossseed: 'Cross-seed', hdfscan: 'Analyse HDF', repostscan: 'Vérification HDF'};
+const open = new Set();
+async function refreshJobs() {
+  let jobs; try { jobs = await api('/api/jobs'); } catch { return schedule(10000); }
+  if (!jobs.length) { $('#jobs').innerHTML = '<p class="muted">Aucun job pour l\'instant.</p>'; refreshJobs.last = ''; return schedule(10000); }
+  const html = await Promise.all(jobs.map(async j => {
+    const ok = j.status === 'done' || j.status === 'warning';
+    const pct = ok ? 100 : Math.round(j.progress || 0);
+    const t0 = j.started || j.created, t1 = j.finished || Date.now() / 1000;
+    let det = '';
+    if (open.has(j.id)) { try { const d = await api('/api/jobs/' + j.id); det = `<pre data-log="${j.id}">${esc(d.command ? d.command + '\n\n' : '')}${esc(d.log || '(pas encore de sortie)')}</pre>`; } catch {} }
+    const live = ['queued','running'].includes(j.status);
+    const tor = j.torrent ? `<a class="btn small" href="${torrentUrl(j.torrent)}" download>.torrent</a>` : '';
+    const sd = j.seed && SEED[j.seed.state];
+    const seed = sd ? `<div class="st"><span class="s-${sd[1]}">${sd[0]}${j.seed.state === 'waiting' && j.seed.tries ? ` · ${j.seed.tries} essai(s)` : ''}</span></div>
+      ${j.seed.msg && j.seed.state !== 'ok' ? `<div class="kind">${esc(j.seed.msg)}</div>` : ''}` : '';
+    const reann = ok && j.torrent && (!j.seed || j.seed.state !== 'ok')
+      ? `<button class="btn small" data-reann="${esc(j.output)}" title="Reannounce maintenant et relance le suivi">Réannoncer</button>` : '';
+    const upTr = ((cfg.torrent || {}).trackers || []).find(t => t.upload_url);
+    const upload = ok && j.torrent && upTr
+      ? `<a class="btn small" href="${esc(upTr.upload_url)}#postmuxarr=${j.id}" target="_blank" rel="noopener">Uploader sur ${esc(upTr.name)}</a>` : '';
+    const plex = j.plex === 'linked' ? `<button class="btn small" data-plex="unlink" data-path="${esc(j.output)}">Retirer de Plex</button>`
+      : j.plex === 'absent' ? `<button class="btn small" data-plex="link" data-path="${esc(j.output)}">Lier à Plex</button>`
+      : j.plex === 'conflict' ? '<span class="note warn" style="margin:0">Nom déjà pris dans films</span>' : '';
+    // remux à nous, fichier présent (j.plex n'est renseigné que dans ce cas) : suppression possible
+    const rm = j.plex ? `<button class="btn small danger" data-rm="${esc(j.output)}" data-seed="${esc(j.seed ? j.seed.state : '')}">Supprimer le fichier</button>` : '';
+    const extra = tor + (j.has_mi ? `<button class="btn small" data-mi="${j.id}" data-name="${esc(j.name)}" data-tor="${esc(j.torrent || '')}">MediaInfo</button>`
+      : ok && j.kind === 'bdinfo' ? `<button class="btn small" data-rep="${esc(j.source)}">Rapport</button>`
+      : ok && j.kind === 'extract' ? `<button class="btn small" data-open="${esc(j.output)}">Ouvrir</button>` : '');
+    return `<div class="job ${j.status}"><div class="kind">${KIND[j.kind] || 'Remux'}</div><div class="jn">${esc(j.name)}</div>
+      <div class="st"><span class="s-${j.status}">${STATUS[j.status] || j.status}${j.status === 'running' ? ` · ${esc(j.phase || '')} ${pct} %` : ''}</span>
+      <span class="muted">${j.started ? dur(t1 - t0) : ''}</span></div>
+      <div class="bar"><i style="width:${pct}%"></i></div>${seed}
+      <div class="acts">${live ? `<button class="btn small" data-cancel="${j.id}">Annuler</button>` : `<button class="btn small" data-del="${j.id}">Retirer</button>`}
+      ${extra}${upload}${reann}${plex}${rm}<button class="btn small" data-det="${j.id}">${open.has(j.id) ? 'Masquer' : 'Détails'}</button></div>${det}</div>`;
+  }));
+  const out = html.join('');
+  if (out !== refreshJobs.last) {  // rien de neuf : on ne touche pas au DOM (scroll et sélection préservés)
+    // position de lecture des journaux ouverts : collé en bas = suit la sortie, sinon reste où il est
+    const keep = {};
+    document.querySelectorAll('#jobs pre[data-log]').forEach(p => {
+      keep[p.dataset.log] = {top: p.scrollTop, end: p.scrollTop + p.clientHeight >= p.scrollHeight - 4};
+    });
+    $('#jobs').innerHTML = out; refreshJobs.last = out;
+    document.querySelectorAll('#jobs pre[data-log]').forEach(p => {
+      const k = keep[p.dataset.log]; if (k) p.scrollTop = k.end ? p.scrollHeight : k.top;
+    });
+  }
+  // statut des reposts suivis dans l'onglet Repost
+  if (R.inv) {
+    let dirty = false;
+    R.inv.releases.forEach(r => { if (!r.job) return; const j = jobs.find(x => x.id === r.job.id);
+      if (j && j.status !== r.job.status) { r.job.status = j.status; dirty = true; } });
+    if (dirty) { renderList(); if (R.cur && R.cur.job) { R.cur.job = R.cur.rel.job; renderUpload(); } }
+  }
+  // vérification de masse du Repost : la colonne HDF se remplit au fil du job
+  if (R.inv) {
+    const bj = jobs.find(j => j.kind === 'repostscan');
+    const busy = !!bj && ['queued', 'running'].includes(bj.status);
+    if (busy || R.bulkBusy) { const was = R.bulkBusy; R.bulkBusy = busy; if (busy || was) loadChecks(); }
+  }
+  // analyse HDF du dossier affiché : on recharge les verdicts au fil du job
+  if (S.browse) {
+    const sj = jobs.find(j => j.kind === 'hdfscan' && j.source === S.browse.path);
+    const busy = !!sj && ['queued', 'running'].includes(sj.status);
+    if (busy || S.scanBusy) { const was = S.scanBusy; S.scanBusy = busy; if (busy || was) loadScan(); }
+  }
+  const fresh = jobs.find(j => j.has_mi && S.mine.has(j.id) && !S.shown.has(j.id) && !['queued','running'].includes(j.status));
+  const tdone = jobs.find(j => j.kind === 'torrent' && j.torrent && S.mine.has(j.id) && !S.shown.has(j.id) && !['queued','running'].includes(j.status));
+  if (tdone) { S.shown.add(tdone.id); toast('Torrent prêt : bouton « .torrent » dans le panneau Jobs.'); }
+  if (fresh) { S.shown.add(fresh.id); showMediainfo(fresh.id, fresh.name, fresh.torrent); }
+  schedule(jobs.some(j => ['queued','running'].includes(j.status)) ? 2000 : 10000);
+}
+function schedule(ms) { clearTimeout(refreshJobs.h); refreshJobs.h = setTimeout(refreshJobs, ms); }
+$('#jobs').addEventListener('click', async e => {
+  const b = e.target.closest('button'); if (!b) return;
+  const d = b.dataset;
+  try {
+    if (d.cancel && confirm('Annuler ce job ? Ce qui est partiel sera supprimé.')) await api(`/api/jobs/${d.cancel}/cancel`, {method: 'POST'});
+    if (d.del) await api('/api/jobs/' + d.del, {method: 'DELETE'});
+    if (d.rm) {
+      const hdf = d.seed === 'ok' ? '\n\n⚠ Le tracker a déjà accepté ce torrent : il est sans doute en ligne sur HD-Forever, fais-le supprimer là-bas aussi.' : '';
+      if (!confirm(`Supprimer définitivement ${d.rm.split('/').pop()} ?\n\nPartent avec lui : son .torrent et son seed dans qBittorrent, le BDInfo joint, le hardlink Plex et ses jobs.${hdf}`)) return;
+      const r = await post('/api/remux/remove', {path: d.rm});
+      toast('Supprimé : ' + r.removed.join(', '));
+    }
+    if (d.det) { const id = +d.det; open.has(id) ? open.delete(id) : open.add(id); }
+    if (d.rep) return showReport(d.rep);
+    if (d.mi) return showMediainfo(d.mi, d.name, d.tor);
+    if (d.plex) { const r = await post('/api/plex', {path: d.path, action: d.plex});
+      toast(r.plex === 'linked' ? 'Hardlink créé dans films.' : 'Retiré de films (le remux est intact).'); }
+    if (d.reann) { await post('/api/seed/reannounce', {path: d.reann}); toast('Reannounce envoyé, suivi relancé.'); }
+    if (d.open) { showTab('remux'); await browse(d.open.replace(/\/[^/]+$/, '')); return loadPlaylists(d.open); }
+  } catch (err) { toast(err.message, true); }
+  refreshJobs();
+});
+
+/* ---------------------------------------------------------------- recherche */
+// insensible à la casse et aux accents ; points, tirets, _ et apostrophes valent des espaces ; tous les mots doivent figurer
+const qNorm = s => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[._\-'’\s]+/g, ' ').trim();
+function qMatch(q, ...fields) {
+  const words = qNorm(q).split(' ').filter(Boolean); if (!words.length) return true;
+  const hay = fields.map(qNorm).join(' ');
+  return words.every(w => hay.includes(w));
+}
+function searchBox(sel, apply) {
+  const el = $(sel);
+  el.addEventListener('input', () => apply(el.value));
+  el.addEventListener('keydown', e => { if (e.key === 'Escape' && el.value) { el.value = ''; apply(''); } });
+}
+searchBox('#bq', v => { S.q = v; if (S.browse) renderBrowse(); });
+searchBox('#rq', v => { R.q = v; renderList(); });
+
+/* ---------------------------------------------------------------- init */
+(async () => {
+  try { cfg = await api('/api/config'); } catch (e) { return toast('Configuration illisible : ' + e.message, true); }
+  const chap = {fr: 'fre', en: 'eng'}[cfg.chapter_language] || cfg.chapter_language || 'fre';
+  $('#o-chap').innerHTML = Object.keys(cfg.languages).filter(k => !['fra','deu','und'].includes(k))
+    .map(k => `<option value="${k}" ${k === chap ? 'selected' : ''}>${esc(cfg.languages[k])}</option>`).join('');
+  $('#o-chtpl').value = cfg.chapter_name_template || '';
+  $('#o-nfo').checked = cfg.nfo !== false; $('#o-link').checked = cfg.hardlink !== false;
+  const team = cfg.repost.team || 'HDForever';
+  HDF_LAB.allowed = `Doublon toléré (${team})`;
+  VERDICT.allowed[1] = m => `Un ${m} équivalent existe, mais c'est une release ${team} : elle reste postable.`;
+  renderTorrentBox();
+  try { S.hideDone = localStorage.getItem('pm.hideDone') !== '0'; } catch { S.hideDone = true; }
+  browse(); refreshJobs();
+  if (location.hash === '#repost') showTab('repost');
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,31 @@
+# Service postmuxarr, à placer dans le docker-compose.yml du stack (chemins relatifs au dossier du stack).
+# Secrets dans le .env du stack : QBT_API_KEY, TMDB_API_KEY, HDF_API_KEY, NETTOYARR_USER, NETTOYARR_PASS.
+services:
+  postmuxarr:
+    build: ./postmuxarr
+    image: postmuxarr
+    container_name: postmuxarr
+    user: "1026:100"
+    environment:
+      - TZ=Europe/Paris
+      - SOURCE_ROOT=/volume1/media/downloads
+      - OUTPUT_DIR=/volume1/media/remux
+      - PLEX_DIR=/volume1/media/films
+      - QBT_API_KEY=${QBT_API_KEY}
+      - TMDB_API_KEY=${TMDB_API_KEY}
+      - HDF_API_KEY=${HDF_API_KEY}
+      - NETTOYARR_USER=${NETTOYARR_USER:-}
+      - NETTOYARR_PASS=${NETTOYARR_PASS:-}
+    volumes:
+      - type: bind                          # un seul montage : indispensable pour les hardlinks
+        source: /volume1/media
+        target: /volume1/media
+        bind:
+          propagation: rslave           # ISO montés par DSM visibles sans redémarrer
+      - ./postmuxarr-data:/data
+      - ./postmuxarr/config.yml:/app/config.yml:ro
+    ports:
+      - "8790:8790"
+    labels:
+      - com.centurylinklabs.watchtower.enable=false   # image locale : Watchtower ne doit pas tenter de la tirer
+    restart: unless-stopped

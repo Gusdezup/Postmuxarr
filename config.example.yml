@@ -1,0 +1,99 @@
+# Modèle de configuration. À la 1re installation : cp config.example.yml config.yml, puis édite config.yml.
+# Les mises à jour ne touchent jamais config.yml.
+# Conventions et réglages — modifiable sans rebuild : sudo docker compose restart postmuxarr
+
+# Dossiers (chemins vus par le conteneur, donc à monter dans docker-compose)
+paths:
+  start: /volume1/media/downloads           # dossier ouvert au lancement (sous les sources ou la destination)
+  output: /volume1/media/remux              # destination des remux ; même volume que films/ pour les hardlinks
+
+group: HDForever
+source: BluRay
+
+# Chapitres : langue et gabarit de nom (<NUM:2> = numéro sur 2 chiffres)
+chapter_language: fre
+chapter_name_template: "Chapitre <NUM:2>"
+
+# Champs vides supprimés automatiquement (pas de ".." dans le nom)
+release_template: "{title}.{year}.{edition}.{lang}.{subs}.{res}.{source}.Remux.{video}.{audio}-{group}"
+
+editions: ["", "Remastered", "Restauration.4K"]
+subs_tags: ["", "STEN", "VOSTEN", "Custom.Subs"]
+
+# Variantes proposées pour une piste audio française
+french_variants: [VOF, VFF, VFQ, VFI]
+
+# Gabarits des noms de pistes
+track_names:
+  video: "{codec} {res}"
+  audio: "{variant} {codec} {channels}"
+  subtitles: "{lang_name} {kind} {format}"
+
+subtitle_kinds: [Forcés, Complets, SDH]
+
+languages:
+  fre: Français
+  fra: Français
+  eng: Anglais
+  ger: Allemand
+  deu: Allemand
+  ita: Italien
+  spa: Espagnol
+  por: Portugais
+  jpn: Japonais
+  und: Indéterminé
+
+# Post-traitement coché par défaut
+nfo: true
+hardlink: true
+
+# ---------------------------------------------------------------- qBittorrent
+# Authentification : clé API (qBittorrent >= 5.2) dans stackmux/.env → QBT_API_KEY=...
+# Générée dans qBittorrent : Préférences → WebUI → API Key. Jamais dans ce fichier.
+qbittorrent:
+  url: http://192.168.1.20:8081
+  # Chemin vu par le NAS → chemin vu par le conteneur qBittorrent (sert aussi, à l'envers, à lire les seeds en repost)
+  path_map:
+    /volume1/media: /media
+  # Catégorie appliquée aux torrents de remux (vide = aucune).
+  # Si elle n'existe pas, elle est créée avec le dossier remux comme chemin :
+  # qBittorrent ne déplacera donc pas le fichier, même en gestion automatique.
+  category: "remux"
+  tags: []              # ex. [remux, hdforever]
+
+torrent:
+  enabled: false        # case « Créer le torrent » cochée par défaut ?
+  piece_size: 4194304   # 4 MiB ; 0 = automatique
+  format: v1            # v1, v2 ou hybrid
+  private: true
+  start_seeding: true
+  reannounce:
+    enabled: true
+    start: upload         # upload : au signal du userscript une fois l'upload accepté ; seed : dès la création du torrent
+    interval: 30          # secondes entre deux reannounce
+    window: 600           # durée maximale du suivi, en secondes
+  trackers:
+    - name: HD-Forever
+      announce: "https://REMPLACE-MOI/announce"   # URL d'announce avec ta passkey
+      source: "HD-Forever"                        # champ source (hash identique au site)
+      upload_url: "https://hdf.world/upload.php"  # bouton « Uploader sur … » des jobs (userscript)
+      enabled: true
+
+# ---------------------------------------------------------------- Repost (onglet Repost)
+# Reposter sur HD-Forever des releases déjà en seed ailleurs (Blu-ray Original, remux, rip, mHD, WEB-DL ; WEBRip refusé).
+# Leurs fichiers ne sont jamais modifiés ; seuls les remux sont renommés (hardlink), le reste garde son nom.
+# Secrets dans stackmux/.env : HDF_API_KEY (HDF → Intégrations → API),
+# NETTOYARR_USER / NETTOYARR_PASS (seulement si l'authentification de Nettoyarr est activée).
+repost:
+  nettoyarr_url: http://192.168.1.20:9999   # inventaire des releases, lu dans Nettoyarr sans rien y modifier
+  category: "repost"                        # catégorie qBittorrent des reposts et cross-seeds, créée sans chemin (vide = aucune)
+  hdf_api: https://hdf.world/api.php
+  # Nom de release nettoyé (accents, apostrophes) : hardlink renommé ici, le fichier de l'autre seed garde son nom.
+  # Même volume que les téléchargements, et hors de paths.output et de la bibliothèque Plex.
+  link_dir: /volume1/media/repost
+  # Doublon HDF (remux et Blu-ray Original) = même catégorie, même résolution, mêmes langues (lues dans les noms),
+  # taille à ± 10 % près : bloquant, sauf pour les releases de la team ci-dessous (vide = group ci-dessus).
+  # Rip, mHD, WEB-DL : une release de même catégorie et résolution déclenche une alerte, l'upload se confirme à la main.
+  size_tolerance: 0.10
+  team: HDForever
+  lookup_ttl: 21600     # userscripts des autres trackers (PTP…) : cache des recherches HDF par film, en secondes

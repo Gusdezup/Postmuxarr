@@ -1,0 +1,22 @@
+# Secrets et réglages locaux : jamais dans Git
+config.yml
+.env
+*.env
+# Données de l'app (SQLite, rapports BDInfo, .torrent)
+data/
+*.db
+*.sqlite
+*.sqlite3
+# Sauvegardes des patches et anciens fichiers
+*.avant-*
+*.bak
+*.bak.*
+config.yml.v*
+compose-service.yml
+postmuxarr-*.sh
+# Divers
+__pycache__/
+*.pyc
+.DS_Store
+._*
+@eaDir/
