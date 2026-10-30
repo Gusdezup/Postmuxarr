@@ -7,9 +7,8 @@ Web app Docker pour les membres de HD-Forever, en deux volets :
   hardlink vers la bibliothèque, vérification des doublons sur HD-Forever avant de remuxer.
 - **Repost** : reprend des releases déjà en seed dans qBittorrent et les prépare pour HD-Forever. Les fichiers des
   autres seeds ne sont jamais modifiés.
-  - Inventaire lu dans **qBittorrent** (les cross-seeds d'une même release sont regroupés), ou dans
-    [Nettoyarr](https://github.com/Gusdezup/Nettoyarr) s'il est installé (titres et trackers via Radarr, Sonarr,
-    Prowlarr). Nettoyarr est facultatif.
+  - Inventaire lu dans **qBittorrent** (les cross-seeds d'une même release sont regroupés). Avec **Radarr** et
+    **Sonarr** (facultatifs), titre et fiche TMDB exacts de chaque release, d'après leur historique.
   - Releases repostables : un film en MKV, une saison complète (dossier d'épisodes MKV), un FULL Blu-ray (BDMV ou ISO).
   - Filtres à règles (tracker, catégorie, taille, nom, résolution, contenu…) et champ « Règles HDF » : ce que les
     règles d'upload refusent d'après le nom et le contenu (DVD, CAM/TS, WEBRip, 720p, épisode seul, mHD hors teams
@@ -23,6 +22,12 @@ Les traitements longs sont des jobs côté serveur : le navigateur peut être fe
 
 > **Sécurité** : sans la protection par mot de passe (voir Accès), toute personne de ton réseau peut ouvrir
 > Postmuxarr. Ne l'expose pas sur Internet, et jamais sans HTTPS : en HTTP, le mot de passe circule en clair.
+
+## Aperçu
+
+![Remux : playlist, pistes, nom de release, torrent](docs/screens/Postmuxarr-Remux.png)
+
+![Repost : inventaire filtré selon les règles HDF](docs/screens/Postmuxarr-Repost.png)
 
 ## Prérequis
 
@@ -38,6 +43,8 @@ Les traitements longs sont des jobs côté serveur : le navigateur peut être fe
   disponibilité. Facultative, mais sans elle aucune vérification sur HDF.
 - **Clé TMDB** (gratuite, themoviedb.org ▸ Paramètres ▸ API) : identification des films et séries, langue
   originale. Facultative, recommandée.
+- **Radarr et Sonarr** (facultatifs, une ou plusieurs instances) : adresse et clé API. Leur historique donne le titre
+  et la fiche TMDB exacts des releases du Repost, sans recherche par le nom.
 - **Remux** (facultatif, le Repost s'en passe) : Blu-ray déjà déchiffrés (dossier BDMV ou ISO, par exemple sauvegardés
   avec MakeMKV) ; mkvmerge ne lit pas un disque protégé par AACS. Prévoir l'espace libre du remux, plus la taille de
   l'ISO pour une extraction temporaire.
@@ -53,7 +60,7 @@ Les traitements longs sont des jobs côté serveur : le navigateur peut être fe
    Les médias doivent être montés au même chemin que sur l'hôte, en un seul montage (hardlinks).
 4. `sudo docker compose up -d --build postmuxarr`, puis http://NAS:8790
 5. Onglet **Réglages** : connexion à qBittorrent (avec le bouton Tester, qui vérifie aussi la correspondance des
-   chemins), clé TMDB, clé API HD-Forever, et Nettoyarr si tu l'utilises.
+   chemins), clé TMDB, clé API HD-Forever, et Radarr et Sonarr si tu les utilises.
 
 ## Réglages
 
@@ -61,15 +68,15 @@ L'onglet Réglages regroupe :
 
 - **qBittorrent** : adresse, clé API (qBittorrent 5.2 et plus) ou utilisateur et mot de passe, catégories et tags,
   correspondance des chemins (dossier vu par Postmuxarr → même dossier vu par qBittorrent).
-- **Services** : clé TMDB, clé API HD-Forever (HDF → Intégrations → API), source de l'inventaire du Repost,
-  Nettoyarr (facultatif).
+- **Services** : clé TMDB, clé API HD-Forever (HDF → Intégrations → API), Radarr et Sonarr (facultatifs, autant
+  d'instances que tu veux : nom, adresse et clé API ; Postmuxarr lit seulement leur historique), noms affichés des trackers.
 - **Remux et règles d'upload HDF** : tag des releases, team de la dérogation au doublon, tolérance de taille,
   termes interdits, teams mHD, seuils de débit et de CRF, réglages x264 minimum, formats audio admis, chapitres…
   Valeurs par défaut : règles d'upload de HD-Forever d'octobre 2026. Seules tes modifications sont enregistrées ;
   « Critères par défaut » y revient.
 
 Les réglages sont stockés dans `/data` (base de l'app). Les clés et mots de passe ne sont jamais renvoyés à la page.
-Les variables d'environnement (`QBT_API_KEY`, `TMDB_API_KEY`, `HDF_API_KEY`, `NETTOYARR_USER`, `NETTOYARR_PASS`)
+Les variables d'environnement (`QBT_API_KEY`, `TMDB_API_KEY`, `HDF_API_KEY`)
 et `config.yml` restent acceptés en repli : l'interface est prioritaire.
 
 ## Accès

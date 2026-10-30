@@ -175,25 +175,21 @@ input[type=password]{background:var(--ink);border:1px solid var(--line);border-r
 .set-act{margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--line)}
 #v-settings .box h3{font-size:1rem;margin-bottom:.8rem}
 @media (max-width:900px){.set-f{grid-template-columns:1fr}.set-f .span2{grid-column:auto}}
-input[type=password]{background:var(--ink);border:1px solid var(--line);border-radius:6px;padding:.3rem .45rem;width:100%;min-width:0}
-::placeholder{color:#8d95b8aa}
-.set-f{grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem 1rem;align-items:end}
-.set-f .span2{grid-column:span 2} .set-f .span3{grid-column:1/-1}
-.set-f input[type=text],.set-f input[type=password],.set-f select{width:100%}
-.set-sub{grid-column:1/-1;font-size:.78rem;font-weight:600;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);
-  margin-top:.5rem;padding-top:.75rem;border-top:1px solid var(--line)}
-.pm-row{display:grid;grid-template-columns:minmax(0,1fr) auto minmax(0,1fr) auto;gap:.5rem;align-items:center;margin-bottom:.5rem}
-.pm-row input{font-size:.85rem}
-.set-act{margin-top:.9rem;padding-top:.8rem;border-top:1px solid var(--line)}
-#v-settings .box h3{font-size:1rem;margin-bottom:.8rem}
-@media (max-width:900px){.set-f{grid-template-columns:1fr}.set-f .span2{grid-column:auto}}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+.arr-row{display:grid;grid-template-columns:7.5rem minmax(0,1fr) minmax(0,1.5fr) minmax(0,1fr) auto;gap:.5rem;align-items:center;margin-bottom:.5rem}
+@media (max-width:900px){.arr-row{grid-template-columns:1fr 1fr;padding-bottom:.6rem;border-bottom:1px dashed var(--line)}.arr-row [data-af=url]{grid-column:1/-1}}
+body.nojobs .layout{grid-template-columns:minmax(0,1fr)}
+body.nojobs aside{display:none}
+aside h2{display:flex;justify-content:space-between;align-items:center}
+#jobs-toggle[aria-pressed=true]{border-color:var(--muted)}
+.jb{display:inline-block;min-width:1.25rem;padding:0 .35rem;margin-left:.4rem;border-radius:9px;background:var(--lamp);color:#1a1405;
+  font-size:.75rem;font-weight:700;text-align:center}
 </style>
 </head>
 <body>
 <header><h1>Postmuxarr</h1>
   <nav class="tabs" aria-label="Mode"><button data-tab="remux" class="on">Remux</button><button data-tab="repost">Repost</button><button data-tab="settings">Réglages</button></nav>
-  <span class="free" id="free"></span></header>
+  <span class="free" id="free"></span><button class="btn small" id="jobs-toggle" aria-pressed="true" title="Afficher ou masquer le panneau des jobs">Jobs</button></header>
 
 <div class="layout">
 <main id="v-remux">
@@ -286,7 +282,7 @@ input[type=password]{background:var(--ink);border:1px solid var(--line);border-r
 </main>
 
 <aside>
-  <h2>Jobs</h2>
+  <h2>Jobs <button class="btn small rdel" id="jobs-hide" title="Masquer le panneau (bouton « Jobs » en haut pour le rouvrir)">Masquer</button></h2>
   <p class="hint">Ils tournent sur le NAS : tu peux fermer cette page.</p>
   <div id="jobs"><p class="muted">Aucun job pour l'instant.</p></div>
 </aside>
@@ -949,14 +945,14 @@ const SHAPE_LAB = {mkv: 'Film : un seul MKV', season: 'Saison complète (MKV)', 
 const ELIG_LAB = {ok: 'Conforme', check: 'À vérifier', refused: 'Refusée'};
 const RES_LAB = {'2160p': '2160p (4K, UHD)', '1080p': '1080p', '1080i': '1080i', '720p': '720p', none: 'Inconnue (SD…)'};
 const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const KIND_LAB = {film: 'Film', serie: 'Série', movie: 'Film (Radarr)', episodes: 'Série (Sonarr)', orphan: 'Hors *arr'};
-// même règle que Nettoyarr : nom saisi dans sa config, sinon Prowlarr, sinon domaine sans sous-domaine ni extension
+const KIND_LAB = {film: 'Film', serie: 'Série'};
+// nom saisi dans Réglages ▸ Services, sinon domaine sans sous-domaine ni extension
 function autoTracker(h) {
   if (!h || h === '?' || /^[\d.]+$/.test(h)) return h || '?';
   const p = h.split('.'), b = p.length >= 2 ? p[p.length - 2] : p[0];
   return b.charAt(0).toUpperCase() + b.slice(1);
 }
-const trName = h => (R.inv && (R.inv.tracker_names[h] || R.inv.prowlarr_names[h])) || autoTracker(h);
+const trName = h => (R.inv && R.inv.tracker_names[h]) || autoTracker(h);
 const hdfState = r => r.job && !['failed', 'cancelled', 'interrupted'].includes(r.job.status) ? 'job' : (r.hdf || 'none');
 // releases éligibles : pas refusées par les règles d'upload HDF (nom et contenu), pas déjà en seed sur HDF
 const defaultRules = () => ({match: 'all', rules: [{f: 'elig', op: 'isnt', v: 'refused'},
@@ -1124,43 +1120,26 @@ async function loadInventory() {
   $('#invsub').textContent = 'lecture de l\'inventaire…';
   try {
     const d = await api('/api/repost/inventory');
-    if (d.state === 'building') { $('#invsub').textContent = 'Nettoyarr construit son inventaire…'; return pollInventory(d.job_id); }
     if (d.state !== 'ready') {
       R.inv = null; $('#rlist').innerHTML = ''; $('#rcount').textContent = '';
       $('#invsub').textContent = d.error ? d.error : 'inventaire vide : actualise-le';
       return;
     }
     R.inv = d;
-    $('#invsub').textContent = 'inventaire ' + (d.source === 'qbittorrent' ? 'qBittorrent' : 'Nettoyarr') + ' du ' + new Date(d.built_at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'});
+    $('#invsub').textContent = 'inventaire qBittorrent' + (cfg.repost.arr ? ' (titres Radarr et Sonarr)' : '') + ' du ' + new Date(d.built_at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'});
     $('#rwarn').innerHTML = d.warnings.length ? `<p class="note warn">${d.warnings.map(esc).join('<br>')}</p>` : '';
     if (!R.rules) { const saved = await api('/api/repost/rules'); R.rules = saved && Array.isArray(saved.rules) ? saved : defaultRules(); }
     renderRules(); renderList();
   } catch (e) { $('#invsub').textContent = ''; $('#rlist').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
-async function pollInventory(id) {
-  if (!id) return setTimeout(loadInventory, 3000);
-  try {
-    const j = await api('/api/repost/inventory/job?id=' + encodeURIComponent(id));
-    if (j.state !== 'done') {
-      $('#inv-prog').textContent = (j.step || '') + (j.percent != null ? ` ${j.percent} %` : '');
-      return setTimeout(() => pollInventory(id), 1500);
-    }
-    $('#inv-prog').textContent = ''; $('#inv-refresh').disabled = false;
-    if (j.result && j.result.ok === false) toast('Nettoyarr : ' + j.result.error, true);
-    loadInventory();
-  } catch (e) { $('#inv-prog').textContent = e.message; $('#inv-refresh').disabled = false; }
-}
 $('#inv-refresh').onclick = async () => {
-  $('#inv-refresh').disabled = true; $('#inv-prog').textContent = 'Démarrage…';
-  try {
-    const r = await post('/api/repost/inventory/refresh', {});
-    if (r.job_id) pollInventory(r.job_id);
-    else { $('#inv-prog').textContent = ''; $('#inv-refresh').disabled = false; loadInventory(); }  // qBittorrent : direct
-  }
-  catch (e) { $('#inv-prog').textContent = ''; $('#inv-refresh').disabled = false; toast(e.message, true); }
+  $('#inv-refresh').disabled = true; $('#inv-prog').textContent = cfg.repost.arr ? 'Lecture de Radarr et Sonarr…' : '';
+  try { await post('/api/repost/inventory/refresh', {}); await loadInventory(); }
+  catch (e) { toast(e.message, true); }
+  $('#inv-prog').textContent = ''; $('#inv-refresh').disabled = false;
 };
 function startRepost() {
-  loadInventory();  // Nettoyarr facultatif : sans lui, l'inventaire est lu dans qBittorrent
+  loadInventory();
 }
 
 /* ---------------------------------------------------------------- repost : vérification et upload */
@@ -1179,15 +1158,15 @@ const VERDICT = {
 const KIND_HDF = {identical: 'Identique', dupe: 'Doublon', review: 'À arbitrer', same: 'Même catégorie', remux: 'Remux', other: 'Autre'};
 const relOf = id => R.inv && R.inv.releases.find(x => x.id === id);
 
-async function openRelease(id, kind) {
+async function openRelease(id, kind, variant) {
   const r = relOf(id); if (!r) return;
   R.sel = id; renderList();
   $('#r2').hidden = false; $('#r2sub').textContent = r.title;
   $('#rdetail').innerHTML = '<p class="muted">Lecture du torrent dans qBittorrent…</p>';
   try {
-    R.cur = {...await post('/api/repost/release', {hashes: r.hashes, kind: kind || ''}), rel: r};
+    R.cur = {...await post('/api/repost/release', {hashes: r.hashes, kind: kind || '', variant: variant || ''}), rel: r};
     renderDetail();
-    if (!kind) $('#r2').scrollIntoView({behavior: 'smooth', block: 'start'});
+    if (!kind && !variant) $('#r2').scrollIntoView({behavior: 'smooth', block: 'start'});
   } catch (e) { R.cur = null; $('#rdetail').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
 function renderCheck(chk) {
@@ -1263,10 +1242,13 @@ function renderDetail() {
   $('#rdetail').innerHTML = `<div class="rel-name">${esc(c.clean)}<span class="muted">${ext}</span></div>
     <p class="note">${gb(c.size)} · ${c.folder && !c.disc && !c.season ? 'release en dossier : seul le MKV sera uploadé · ' : ''}${c.season ? `saison complète, ${c.episodes.length} épisode(s) · ` : ''}${c.disc_dir ? 'disque complet : tout le dossier sera uploadé · ' : ''}${esc(c.qbt_path)}</p>
     <div class="row" style="margin:.4rem 0">Catégorie HDF : ${kindSelect(c)}</div>
+    ${(c.variants || []).length > 1 ? `<div class="row" style="margin:.4rem 0">Version à reposter : <select id="rvar" aria-label="Version à reposter">
+      ${c.variants.map(v => `<option value="${esc(v.hash)}" ${v.hash === c.hash ? 'selected' : ''} title="${esc(v.name)}">${esc(trName(v.host))} — ${v.nfiles} fichier(s)${v.nfo ? `, dont ${v.nfo} .nfo` : ', sans .nfo'} · ${gb(v.total)}</option>`).join('')}</select>
+      <span class="muted">${c.variants.length} cross-seeds de cette release : la plus complète par défaut</span></div>` : ''}
     ${renamed ? `<p class="note warn">Nom nettoyé (accents, apostrophes) : le torrent portera sur un hardlink renommé dans ${esc(cfg.repost.link_dir)}, le fichier d'origine garde son nom.</p>` : ''}
     ${c.kind !== 'remux' && c.kinds[c.kind] ? '<p class="note">Hors remux, la release garde son nom d\'origine.</p>' : ''}
     ${(c.elig_why || []).length ? `<p class="note${c.elig === 'refused' ? ' warn' : ''}">Règles HDF : ${esc(c.elig_why.join(' ; '))}</p>` : ''}
-    <div class="box" style="margin-top:1rem"><h3>${c.series ? 'Série' : 'Film'} TMDB</h3>
+    <div class="box" style="margin-top:1rem"><h3>${c.series ? 'Série' : 'Film'} TMDB${c.arr && c.arr.tmdb ? ` <span class="muted" style="font-weight:400">· selon ${esc(c.arr.src)} : ${esc(c.arr.title)}${c.arr.year ? ` (${esc(c.arr.year)})` : ''}</span>` : ''}</h3>
       <div class="row">${opts ? `<select id="rtm">${opts}<option value="" ${c.tmdb_id && !inList ? 'selected' : ''}>Autre (ID ci-contre)</option></select>` : ''}
         <input type="text" id="rtid" placeholder="ID TMDB" value="${c.tmdb_id || ''}" style="width:7rem" inputmode="numeric">
         <span id="rtlink">${c.tmdb_id ? `<a class="lnk" href="https://www.themoviedb.org/${c.series ? 'tv' : 'movie'}/${c.tmdb_id}" target="_blank" rel="noopener">Fiche TMDB</a>` : ''}</span></div>
@@ -1287,7 +1269,8 @@ function setTmdb(id) {
 }
 $('#rdetail').addEventListener('change', e => {
   if (e.target.id === 'rtm') { $('#rtid').value = e.target.value; setTmdb(+e.target.value || null); }
-  if (e.target.id === 'rkind' && e.target.value) openRelease(R.cur.rel.id, e.target.value);  // la vérification est à refaire
+  if (e.target.id === 'rkind' && e.target.value) openRelease(R.cur.rel.id, e.target.value, R.cur.hash);
+  if (e.target.id === 'rvar') openRelease(R.cur.rel.id, R.cur.kind !== R.cur.kind_detected ? R.cur.kind : '', e.target.value);  // la vérification est à refaire
 });
 $('#rdetail').addEventListener('input', e => {
   if (e.target.id === 'rtid') { const n = parseInt(e.target.value, 10); setTmdb(n > 0 ? n : null);
@@ -1300,7 +1283,7 @@ $('#rdetail').addEventListener('click', async e => {
   if (b.id === 'rmigo') {
     b.disabled = true; $('#rmist').textContent = 'Lecture du fichier…';
     try {
-      c.mi = await post('/api/repost/analyze', {hashes: c.rel.hashes, kind: c.kind, tmdb_id: c.tmdb_id});
+      c.mi = await post('/api/repost/analyze', {hashes: c.rel.hashes, kind: c.kind, tmdb_id: c.tmdb_id, variant: c.hash});
       const rank = {ok: 0, check: 1, refused: 2};
       if ((rank[c.mi.verdict] || 0) > (rank[c.rel.elig] || 0)) c.rel.elig = c.mi.verdict;
       c.rel.elig_why = [...(c.rel.elig_why || []).filter(x => !x.startsWith('MediaInfo : ')),
@@ -1312,7 +1295,7 @@ $('#rdetail').addEventListener('click', async e => {
   if (b.id === 'rchk') {
     b.disabled = true; $('#rchkst').textContent = 'Interrogation de HD-Forever…';
     try {
-      c.check = await post('/api/repost/check', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, kind: c.kind});
+      c.check = await post('/api/repost/check', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, kind: c.kind, variant: c.hash});
       c.forceOk = false; c.rel.hdf = c.check.status; renderDetail(); renderList();
     } catch (err) { b.disabled = false; $('#rchkst').textContent = ''; toast(err.message, true); }
   }
@@ -1339,7 +1322,7 @@ $('#rdetail').addEventListener('click', async e => {
     b.disabled = true;
     const torrent = {enabled: true, trackers: [...document.querySelectorAll('[data-rtr]:checked')].map(x => x.dataset.rtr),
       piece_size: +$('#rt-piece').value || 0, format: (cfg.torrent || {}).format || 'v1'};
-    const r = await launch('/api/repost/upload', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, torrent, force: !!c.forceOk}, 'Repost');
+    const r = await launch('/api/repost/upload', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, torrent, force: !!c.forceOk, variant: c.hash}, 'Repost');
     if (r) { c.job = c.rel.job = {id: r.id, status: 'queued'}; renderUpload(); renderList(); } else b.disabled = false;
   }
 });
@@ -1475,7 +1458,7 @@ $('#conn').addEventListener('click', async e => {
   } catch (err) { t.disabled = false; st.className = 'error'; st.textContent = err.message; }
 });
 /* clés et services */
-const SV = {d: null};
+const SV = {d: null, from: null, arr: [], names: {}};
 const SV_SECRETS = [['tmdb_key', 'Clé TMDB (API v3 ou jeton de lecture v4)'], ['hdf_key', 'Clé API HD-Forever (Intégrations → API)']];
 async function loadSvc() {
   try { SV.d = await api('/api/services'); renderSvc(); } catch (e) { $('#svc').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
@@ -1485,37 +1468,61 @@ function svcSecret(k, label, extra) {
   return `<label${extra || ''}><span class="lab">${esc(label)}${s.source === 'réglages' ? ` <button class="reset" data-svclear="${k}">effacer</button>` : ''}</span>
     <input type="password" id="sv-${k}" autocomplete="new-password" placeholder="${esc(s.set ? `définie (${s.source})` : 'non définie')}"></label>`;
 }
+function arrRows() {
+  return SV.arr.map((a, i) => `<div class="arr-row" data-arr="${i}">
+    <select data-af="kind" aria-label="Type">${[['radarr', 'Radarr'], ['sonarr', 'Sonarr']].map(([k, l]) => `<option value="${k}" ${k === a.kind ? 'selected' : ''}>${l}</option>`).join('')}</select>
+    <input type="text" data-af="name" value="${esc(a.name)}" placeholder="Nom (ex. ${a.kind === 'sonarr' ? 'Sonarr anime' : 'Radarr 4K'})" aria-label="Nom">
+    <input type="text" data-af="url" value="${esc(a.url)}" placeholder="http://192.168.1.20:${a.kind === 'sonarr' ? 8989 : 7878}" aria-label="Adresse">
+    <input type="password" data-af="key" value="${esc(a.key || '')}" autocomplete="new-password" placeholder="${a.key_set ? 'clé enregistrée' : 'clé API'}" aria-label="Clé API">
+    <button class="btn small rdel" data-arrdel="${i}" aria-label="Retirer cette instance">✕</button></div>`).join('');
+}
+function readSvcForm() {  // ce qui est saisi, gardé avant de redessiner le bloc (ajout ou retrait d'une ligne)
+  document.querySelectorAll('#svc [data-arr]').forEach(r => { const a = SV.arr[+r.dataset.arr]; if (!a) return;
+    r.querySelectorAll('[data-af]').forEach(el => { a[el.dataset.af] = el.value.trim(); }); });
+  document.querySelectorAll('#svc [data-trn]').forEach(i => { SV.names[i.dataset.trn] = i.value.trim(); });
+}
 function renderSvc(msg, cls) {
-  const d = SV.d, used = d.inventory_used === 'nettoyarr' ? 'Nettoyarr' : 'qBittorrent';
-  const opts = [['', `Automatique (${used})`], ['qbittorrent', 'qBittorrent'], ['nettoyarr', 'Nettoyarr']]
-    .map(([v, l]) => `<option value="${v}" ${v === (d.inventory || '') ? 'selected' : ''}>${esc(l)}</option>`).join('');
+  const d = SV.d;
+  if (SV.from !== d) { SV.from = d; SV.arr = (d.arr || []).map(a => ({...a, key: ''})); SV.names = {...(d.tracker_names || {})}; }
+  const hosts = [...new Set([...(d.hosts || []), ...Object.keys(SV.names)])].sort();
   $('#svc').innerHTML = `<h3>Services</h3>
     <div class="set-f">
       ${svcSecret('tmdb_key', 'Clé TMDB (API v3 ou jeton v4)')}
       ${svcSecret('hdf_key', 'Clé API HD-Forever')}
       <div></div>
-      <div class="set-sub">Inventaire du Repost</div>
-      <label><span class="lab">Source</span><select id="sv-inv">${opts}</select></label>
-      <label class="span2"><span class="lab">Adresse de Nettoyarr (facultatif)</span><input type="text" id="sv-nurl" value="${esc(d.nettoyarr_url)}" placeholder="http://192.168.1.20:9999"></label>
-      <div></div>
-      <label><span class="lab">Nettoyarr : utilisateur</span><input type="text" id="sv-nuser" value="${esc(d.nettoyarr_user)}" autocomplete="off" placeholder="si authentification"></label>
-      ${svcSecret('nettoyarr_pass', 'Nettoyarr : mot de passe')}
+      <div class="set-sub">Radarr et Sonarr (facultatifs) : titre et fiche TMDB exacts des releases du Repost</div>
+      <div class="span3">${arrRows() || '<p class="muted" style="margin:0 0 .5rem">Aucune instance.</p>'}
+        <div class="rtools"><button class="btn small" data-arradd="radarr">+ Radarr</button><button class="btn small" data-arradd="sonarr">+ Sonarr</button></div></div>
+      ${hosts.length ? `<div class="set-sub">Noms des trackers (vide = nom automatique)</div>
+        ${hosts.map(h => `<label><span class="lab">${esc(h)}</span><input type="text" data-trn="${esc(h)}" value="${esc(SV.names[h] || '')}" placeholder="${esc(autoTracker(h))}"></label>`).join('')}` : ''}
     </div>
-    <p class="note">Clés et mot de passe : laisser vide pour garder la valeur enregistrée. Clé HD-Forever : HDF → Intégrations → API.
-      Automatique : Nettoyarr s'il est renseigné (titres et trackers via Radarr, Sonarr, Prowlarr), sinon qBittorrent.</p>
+    <p class="note">Clés : laisser vide pour garder la valeur enregistrée. HD-Forever : Intégrations → API. Radarr et Sonarr :
+      Paramètres → Général → Clé API ; autant d'instances que tu veux. Postmuxarr lit seulement leur historique (le hash de chaque torrent récupéré), rien n'y est modifié.</p>
     <div class="row set-act"><button class="btn" id="sv-test">Tester</button><button class="btn primary" id="sv-save">Enregistrer</button>
-      <span class="${cls || 'muted'}" id="sv-st">${esc(msg || 'Champs vides : valeurs de .env et config.yml')}</span></div>`;
+      <span class="${cls || 'muted'}" id="sv-st">${esc(msg || 'Champs vides : valeurs de .env')}</span></div>`;
 }
 function svcBody(clear) {
-  return {tmdb_key: $('#sv-tmdb_key').value.trim(), hdf_key: $('#sv-hdf_key').value.trim(), nettoyarr_url: $('#sv-nurl').value.trim(),
-    nettoyarr_user: $('#sv-nuser').value.trim(), nettoyarr_pass: $('#sv-nettoyarr_pass').value, inventory: $('#sv-inv').value, clear: clear || []};
+  readSvcForm();
+  const names = {};
+  Object.entries(SV.names).forEach(([h, n]) => { if (n) names[h] = n; });
+  return {tmdb_key: $('#sv-tmdb_key').value.trim(), hdf_key: $('#sv-hdf_key').value.trim(),
+    arr: SV.arr.map(({id, kind, name, url, key}) => ({id: id || '', kind, name: name || '', url: url || '', key: key || ''})),
+    tracker_names: names, clear: clear || []};
 }
 function svcApplied() {  // la page suit les services sans rechargement
   cfg.tmdb = SV.d.tmdb_key.set; cfg.repost.hdf_api = SV.d.hdf_key.set;
-  const had = cfg.repost.nettoyarr; cfg.repost.nettoyarr = !!SV.d.nettoyarr_url;
-  if (!had && cfg.repost.nettoyarr) { R.started = false; $('#inv-refresh').disabled = false; }
-  if (R.inv) loadInventory();  // source de l'inventaire peut-être changée
+  cfg.repost.arr = (SV.d.arr || []).length > 0;
+  if (R.inv) loadInventory();  // titres Radarr/Sonarr et noms des trackers
 }
+$('#svc').addEventListener('click', e => {  // ajout et retrait d'instances (enregistrés avec « Enregistrer »)
+  const d = e.target.dataset;
+  if (!d.arradd && d.arrdel === undefined) return;
+  e.preventDefault(); readSvcForm();
+  if (d.arradd) SV.arr.push({id: '', kind: d.arradd, name: '', url: '', key: '', key_set: false});
+  else SV.arr.splice(+d.arrdel, 1);
+  renderSvc('Modifications non enregistrées.', 'warn');
+  if (d.arradd) { const rows = document.querySelectorAll('#svc .arr-row'); rows[rows.length - 1].querySelector('[data-af="name"]').focus(); }
+});
 $('#svc').addEventListener('click', async e => {
   const t = e.target, st = $('#sv-st');
   if (!t.dataset.svclear && !['sv-test', 'sv-save'].includes(t.id)) return;
@@ -1524,8 +1531,8 @@ $('#svc').addEventListener('click', async e => {
     if (t.id === 'sv-test') {
       st.className = 'muted'; st.textContent = 'Test… (HD-Forever : jusqu\'à 10 s, cadence de son API)';
       const r = await post('/api/services/test', svcBody());
-      const lab = {tmdb: 'TMDB', hdf: 'HD-Forever', nettoyarr: 'Nettoyarr'};
-      const parts = Object.entries(r).map(([k, v]) => `${lab[k]} : ${v.ok ? 'OK' : v.error}`);
+      const lab = {tmdb: 'TMDB', hdf: 'HD-Forever'};
+      const parts = Object.entries(r).map(([k, v]) => `${lab[k] || v.name || k} : ${v.ok ? 'OK' + (v.version ? ` (${v.version})` : '') : v.error}`);
       st.className = !parts.length ? 'muted' : Object.values(r).every(v => v.ok) ? '' : 'warn';
       st.textContent = parts.join(' · ') || 'Rien à tester : aucun service renseigné.';
       t.disabled = false; return;
@@ -1631,6 +1638,7 @@ const KIND = {remux: 'Remux', retouch: 'Retouche', bdinfo: 'BDInfo', extract: 'E
 const open = new Set();
 async function refreshJobs() {
   let jobs; try { jobs = await api('/api/jobs'); } catch { return schedule(10000); }
+  jobsBadge(jobs);
   if (!jobs.length) { $('#jobs').innerHTML = '<p class="muted">Aucun job pour l\'instant.</p>'; refreshJobs.last = ''; return schedule(10000); }
   const html = await Promise.all(jobs.map(async j => {
     const ok = j.status === 'done' || j.status === 'warning';
@@ -1700,6 +1708,18 @@ async function refreshJobs() {
   if (fresh) { S.shown.add(fresh.id); showMediainfo(fresh.id, fresh.name, fresh.torrent); }
   schedule(jobs.some(j => ['queued','running'].includes(j.status)) ? 2000 : 10000);
 }
+/* panneau des jobs : masquable, choix gardé par le navigateur ; le bouton de l'en-tête compte les jobs en cours */
+function setJobsPanel(show) {
+  document.body.classList.toggle('nojobs', !show); $('#jobs-toggle').setAttribute('aria-pressed', String(show));
+  try { localStorage.setItem('pm.jobs', show ? '1' : '0'); } catch {}
+}
+function jobsBadge(jobs) {
+  const n = jobs.filter(j => ['queued', 'running'].includes(j.status)).length;
+  $('#jobs-toggle').innerHTML = 'Jobs' + (n ? `<span class="jb">${n}</span>` : '');
+  $('#jobs-toggle').title = (n ? `${n} job(s) en cours` : 'Aucun job en cours') + ' : afficher ou masquer le panneau';
+}
+$('#jobs-toggle').onclick = () => setJobsPanel(document.body.classList.contains('nojobs'));
+$('#jobs-hide').onclick = () => setJobsPanel(false);
 function schedule(ms) { clearTimeout(refreshJobs.h); refreshJobs.h = setTimeout(refreshJobs, ms); }
 $('#jobs').addEventListener('click', async e => {
   const b = e.target.closest('button'); if (!b) return;
@@ -1753,6 +1773,7 @@ searchBox('#rq', v => { R.q = v; renderList(); });
   VERDICT.allowed[1] = m => `Un ${m} équivalent existe, mais c'est une release ${team} : elle reste postable.`;
   renderTorrentBox();
   try { S.hideDone = localStorage.getItem('pm.hideDone') !== '0'; } catch { S.hideDone = true; }
+  try { setJobsPanel(localStorage.getItem('pm.jobs') !== '0'); } catch { setJobsPanel(true); }
   browse(); refreshJobs();
   if (['#repost', '#settings'].includes(location.hash)) showTab(location.hash.slice(1));
 })();

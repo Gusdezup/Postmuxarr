@@ -82,10 +82,8 @@ torrent:
 # ---------------------------------------------------------------- Repost (onglet Repost)
 # Reposter sur HD-Forever des releases déjà en seed ailleurs (Blu-ray Original, remux, rip, mHD, WEB-DL ; WEBRip refusé).
 # Leurs fichiers ne sont jamais modifiés ; seuls les remux sont renommés (hardlink), le reste garde son nom.
-# Secrets dans stackmux/.env : HDF_API_KEY (HDF → Intégrations → API),
-# NETTOYARR_USER / NETTOYARR_PASS (seulement si l'authentification de Nettoyarr est activée).
+# Secrets dans stackmux/.env : HDF_API_KEY (HDF → Intégrations → API).
 repost:
-  nettoyarr_url: http://192.168.1.20:9999   # inventaire des releases, lu dans Nettoyarr sans rien y modifier
   category: "repost"                        # catégorie qBittorrent des reposts et cross-seeds, créée sans chemin (vide = aucune)
   hdf_api: https://hdf.world/api.php
   # Nom de release nettoyé (accents, apostrophes) : hardlink renommé ici, le fichier de l'autre seed garde son nom.

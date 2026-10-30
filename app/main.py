@@ -2,7 +2,7 @@
 
 Deux usages :
 - Remux : pilote bdinfo, 7z, mkvmerge, mkvpropedit, mediainfo et qBittorrent pour produire des remux Blu-ray.
-- Repost : reprend des releases déjà en seed (inventaire lu dans Nettoyarr) — Blu-ray Original, remux, rip, mHD,
+- Repost : reprend des releases déjà en seed (inventaire lu dans qBittorrent) — Blu-ray Original, remux, rip, mHD,
   WEB-DL —, vérifie HD-Forever par son API, puis cross-seede ou prépare l'upload (torrent + MediaInfo ou BDInfo
   + userscript). Les fichiers des autres seeds ne sont jamais modifiés.
 
@@ -66,7 +66,7 @@ REPOST_TORRENTS = DATA_DIR / "torrents"   # .torrent des reposts : jamais à cô
 APP_DIR = Path(__file__).parent
 DB_PATH = DATA_DIR / "jobs.db"
 LOG_LINES = 400
-BIG_FILE = 50 * 1024 * 1024               # en dessous : nfo, sample, srt… (même seuil que Nettoyarr)
+BIG_FILE = 50 * 1024 * 1024               # en dessous : nfo, sample, srt…
 TMDB_BASE = os.environ.get("TMDB_BASE", "https://api.themoviedb.org/3")
 # sans locale UTF-8, mkvmerge -J tronque sa sortie au premier caractère accentué
 ENV = {**os.environ, "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"}
@@ -115,7 +115,7 @@ def apply_conn(cfg: dict, c: dict) -> dict:
     return {**cfg, "qbittorrent": q, "repost": r}
 
 
-SVC_SECRETS = {"tmdb_key": "TMDB_API_KEY", "hdf_key": "HDF_API_KEY", "nettoyarr_pass": "NETTOYARR_PASS"}
+SVC_SECRETS = {"tmdb_key": "TMDB_API_KEY", "hdf_key": "HDF_API_KEY"}
 
 
 def svc() -> dict:
@@ -766,8 +766,7 @@ def hdf_tracker(cfg: dict) -> dict:
 
 def repost_cfg() -> dict:
     r = load_config().get("repost") or {}
-    return {"nettoyarr": (svc().get("nettoyarr_url") or r.get("nettoyarr_url") or "").rstrip("/"),
-            "category": r.get("category", "repost") or "",
+    return {"category": r.get("category", "repost") or "",
             "hdf_api": (r.get("hdf_api") or "https://hdf.world/api.php").rstrip("/"),
             # hardlinks au nom nettoyé : le fichier de l'autre seed garde son nom
             "link_dir": Path(r.get("link_dir") or "/volume1/media/repost"),
@@ -944,7 +943,7 @@ def api_config():
     cfg["tmdb"] = bool(tmdb_key())
     cfg["paths"] = {"sources": str(SOURCE_ROOT), "output": str(OUTPUT_DIR), "start": str(START_DIR), "plex": str(PLEX_DIR)}
     rc = repost_cfg()
-    cfg["repost"] = {"nettoyarr": bool(rc["nettoyarr"]), "hdf_api": bool(hdf_key()),
+    cfg["repost"] = {"arr": bool(arr_list()), "hdf_api": bool(hdf_key()),
                      "category": rc["category"], "hdf_host": hdf_host, "link_dir": str(rc["link_dir"]), "team": rc["team"]}
     return cfg
 
@@ -1073,40 +1072,53 @@ def api_connections_test(spec: ConnSpec):
     return {"ok": True, "version": version, "paths": paths, "visible": visible, "total": len(ts), "missing": missing}
 
 
+class ArrSpec(BaseModel):
+    id: str = ""                  # vide = nouvelle instance
+    kind: str = "radarr"          # radarr ou sonarr
+    name: str = ""
+    url: str = ""
+    key: str = ""                 # vide = clé inchangée
+
+
 class SvcSpec(BaseModel):
     tmdb_key: str = ""            # secrets : vide = inchangé
     hdf_key: str = ""
-    nettoyarr_url: str = ""
-    nettoyarr_user: str = ""
-    nettoyarr_pass: str = ""
-    inventory: str = ""           # source de l'inventaire du Repost : qbittorrent, nettoyarr, vide = automatique
+    arr: list[ArrSpec] = []       # instances de Radarr et Sonarr, dans l'ordre de la page
+    tracker_names: dict[str, str] = {}   # adresse du tracker → nom affiché (vide = automatique)
     clear: list[str] = []         # secrets saisis dans l'interface à effacer (retour à .env)
 
 
 def svc_merged(spec: SvcSpec) -> dict:
-    url = spec.nettoyarr_url.strip().rstrip("/")
-    if url and not re.match(r"^https?://[^\s/]+", url):
-        raise HTTPException(400, "Adresse de Nettoyarr invalide : http://IP:port")
-    old = svc()
-    inv = spec.inventory if spec.inventory in ("qbittorrent", "nettoyarr") else ""
-    if inv == "nettoyarr" and not (url or (load_config().get("repost") or {}).get("nettoyarr_url")):
-        raise HTTPException(400, "Inventaire Nettoyarr choisi : renseigne son adresse")
-    out = {"nettoyarr_url": url, "nettoyarr_user": spec.nettoyarr_user.strip(), "inventory": inv}
+    old, prev, arr = svc(), {a["id"]: a for a in arr_list()}, []
+    for a in spec.arr[:30]:
+        if a.kind not in ARR_KINDS:
+            raise HTTPException(400, f"Type d'instance inconnu : {a.kind}")
+        u, name = a.url.strip().rstrip("/"), a.name.strip()[:40] or a.kind.capitalize()
+        if not u and not a.key.strip():
+            continue  # ligne laissée vide
+        if not re.match(r"^https?://[^\s/]+", u):
+            raise HTTPException(400, f"Adresse invalide pour {name} : http://IP:port")
+        p = prev.get(a.id) or {}
+        arr.append({"id": a.id if p else secrets.token_hex(4), "kind": a.kind, "name": name, "url": u,
+                    "key": a.key.strip() or p.get("key", "")})
+    out = {"arr": arr, "tracker_names": {str(h).strip().lower()[:200]: str(n).strip()[:40]
+                                         for h, n in list(spec.tracker_names.items())[:200]
+                                         if str(h).strip() and str(n).strip()}}
     for k in SVC_SECRETS:
-        v = getattr(spec, k).strip() if k != "nettoyarr_pass" else getattr(spec, k)
+        v = getattr(spec, k).strip()
         out[k] = "" if k in spec.clear else (v or old.get(k, ""))
     return out
 
 
 def svc_payload() -> dict:
-    s, rc = svc(), load_config().get("repost") or {}
+    s = svc()
     sec = {k: {"set": bool(s.get(k) or os.environ.get(e, "").strip()),
                "source": "réglages" if s.get(k) else ".env" if os.environ.get(e, "").strip() else ""}
            for k, e in SVC_SECRETS.items()}
-    return {**sec, "nettoyarr_url": s.get("nettoyarr_url") or (rc.get("nettoyarr_url") or "").rstrip("/"),
-            "nettoyarr_user": s.get("nettoyarr_user") or os.environ.get("NETTOYARR_USER", ""),
-            "inventory": s.get("inventory") or "", "inventory_used": inv_source(),
-            "source": "réglages" if s else "config.yml"}
+    hosts = sorted({r["host"] for r in db_rows("SELECT DISTINCT host FROM torrent_tracker") if r["host"]})
+    return {**sec, "arr": [{"id": a["id"], "kind": a["kind"], "name": a["name"], "url": a["url"], "key_set": bool(a["key"])}
+                           for a in arr_list()],
+            "tracker_names": s.get("tracker_names") or {}, "hosts": hosts}
 
 
 @app.get("/api/services")
@@ -1117,12 +1129,14 @@ def api_services_get():
 @app.put("/api/services")
 def api_services_put(spec: SvcSpec):
     db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('services', ?)", (json.dumps(svc_merged(spec)),))
+    _ARR["at"] = 0.0  # Radarr et Sonarr relus au prochain affichage de l'inventaire
     return svc_payload()
 
 
 @app.post("/api/services/test")
 def api_services_test(spec: SvcSpec):
-    """Essai sans enregistrer de chaque service renseigné : TMDB, HD-Forever (1 requête, cadence de l'API), Nettoyarr."""
+    """Essai sans enregistrer de chaque service renseigné : TMDB, HD-Forever (1 requête, cadence de l'API), chaque
+    instance de Radarr et Sonarr (résultat sous son id, avec son nom)."""
     m, out = svc_merged(spec), {}
     tk = m["tmdb_key"] or ("" if "tmdb_key" in spec.clear else tmdb_key())
     if tk:
@@ -1144,20 +1158,22 @@ def api_services_test(spec: SvcSpec):
             out["hdf"] = {"ok": True}
         except HTTPException as e:
             out["hdf"] = {"ok": False, "error": str(e.detail).removeprefix("HDF : ")}
-    url = m["nettoyarr_url"] or ((load_config().get("repost") or {}).get("nettoyarr_url") or "").rstrip("/")
-    if url:
-        user = m["nettoyarr_user"] or os.environ.get("NETTOYARR_USER", "")
-        pw = m["nettoyarr_pass"] or ("" if "nettoyarr_pass" in spec.clear else os.environ.get("NETTOYARR_PASS", ""))
-        h = {"Accept": "application/json"}
-        if user or pw:
-            h["Authorization"] = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+    for i, a in enumerate(m["arr"]):
+        k = f"arr{i}"
+        if not a["key"]:
+            out[k] = {"ok": False, "name": a["name"], "error": "clé API manquante"}
+            continue
         try:
-            with urllib.request.urlopen(urllib.request.Request(url + "/inventory", headers=h), timeout=15):
-                out["nettoyarr"] = {"ok": True}
+            st = arr_get(a["url"], a["key"], "system/status", timeout=15) or {}
+            if a["kind"] == "radarr" and str(st.get("appName", "Radarr")).lower() != "radarr" or \
+               a["kind"] == "sonarr" and str(st.get("appName", "Sonarr")).lower() != "sonarr":
+                out[k] = {"ok": False, "name": a["name"], "error": f"c'est un {st.get('appName')}, pas un {a['kind'].capitalize()}"}
+            else:
+                out[k] = {"ok": True, "name": a["name"], "version": st.get("version") or ""}
         except urllib.error.HTTPError as e:
-            out["nettoyarr"] = {"ok": False, "error": "accès refusé (utilisateur, mot de passe ?)" if e.code == 401 else f"erreur {e.code}"}
+            out[k] = {"ok": False, "name": a["name"], "error": "clé API refusée" if e.code == 401 else f"erreur {e.code}"}
         except Exception as e:
-            out["nettoyarr"] = {"ok": False, "error": f"injoignable : {getattr(e, 'reason', e)}"}
+            out[k] = {"ok": False, "name": a["name"], "error": f"injoignable : {getattr(e, 'reason', e)}"}
     return out
 
 
@@ -1750,6 +1766,8 @@ def init_db():
     db_exec("CREATE TABLE IF NOT EXISTS torrent_shape2 (hash TEXT PRIMARY KEY, shape TEXT)")  # v2 : saisons
     db_exec("CREATE TABLE IF NOT EXISTS repost_mi (hash TEXT PRIMARY KEY, result TEXT, at REAL)")
     db_exec("CREATE TABLE IF NOT EXISTS torrent_tracker (hash TEXT PRIMARY KEY, host TEXT)")
+    db_exec("CREATE TABLE IF NOT EXISTS torrent_big (hash TEXT PRIMARY KEY, big INTEGER)")
+    db_exec("CREATE TABLE IF NOT EXISTS arr_link (hash TEXT PRIMARY KEY, tmdb INTEGER, title TEXT, year TEXT, tv INTEGER, src TEXT)")
     # jobs coupés par un redémarrage : on supprime ce qui est partiel
     for j in db_rows("SELECT id, kind, output FROM jobs WHERE status='running'"):
         if j["kind"] in ("remux", None) and j["output"]:
@@ -2189,8 +2207,9 @@ class Worker(threading.Thread):
             try:
                 src = pick_source(q, hashes)
                 self.phase(f"{i + 1}/{len(rels)} · {src['stem'][:60]}")
-                chk = check_row(src["hash"])
-                tmdb_id = (chk or {}).get("tmdb_id") or release_meta(Path(src["path"]))["tmdb_id"]
+                chk = check_for(src)
+                tmdb_id = ((chk or {}).get("tmdb_id") or release_meta(Path(src["path"]))["tmdb_id"]
+                           or (arr_link(hashes) or {}).get("tmdb"))
                 if not tmdb_id and src["kind"] in REL_KINDS:
                     tv = src["season"] or is_series(src["stem"])
                     title, year = (series_title if tv else guess_title)(src["stem"])
@@ -2576,31 +2595,101 @@ def api_plex(spec: PlexSpec):
     return {"plex": plex_state(mkv)}
 
 
-# =========================================================================== repost : Nettoyarr
+# =========================================================================== repost : Radarr et Sonarr (facultatifs)
+# Leur historique des téléchargements porte le hash de chaque torrent (downloadId) et le film ou la série, avec son ID
+# TMDB : correspondance exacte torrent → œuvre, même si la bibliothèque est faite de hardlinks renommés. Lecture seule.
+ARR_KINDS = {"radarr": ("movie", False), "sonarr": ("series", True)}   # type → (champ de l'historique, série)
+_ARR = {"at": 0.0, "warn": []}
 
-def nettoyarr(path: str, method: str = "GET"):
-    """Lecture de Nettoyarr comme simple client (routes de son explorateur), HTTP Basic si son auth est active."""
-    base = repost_cfg()["nettoyarr"]
-    if not base:
-        raise HTTPException(503, "Nettoyarr non configuré : onglet Réglages (ou repost.nettoyarr_url dans config.yml)")
-    headers = {"Accept": "application/json"}
+
+def arr_list() -> list:
+    """Instances de Radarr et Sonarr réglées dans l'onglet Réglages : [{id, kind, name, url, key}]. Reprend le réglage
+    d'une seule instance de chaque de la version précédente (radarr_url, sonarr_url)."""
     s = svc()
-    user = s.get("nettoyarr_user") or os.environ.get("NETTOYARR_USER", "")
-    pw = s.get("nettoyarr_pass") or os.environ.get("NETTOYARR_PASS", "")
-    if user or pw:
-        headers["Authorization"] = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
-    req = urllib.request.Request(base + path, data=b"" if method == "POST" else None, method=method, headers=headers)
+    out = [dict(a) for a in s.get("arr") or [] if isinstance(a, dict) and a.get("kind") in ARR_KINDS and a.get("url")]
+    if "arr" not in s:
+        out = [{"id": k, "kind": k, "name": k.capitalize(), "url": s[f"{k}_url"], "key": s.get(f"{k}_key") or ""}
+               for k in ARR_KINDS if s.get(f"{k}_url")]
+    for a in out:
+        a["name"] = a.get("name") or a["kind"].capitalize()
+    return out
+
+
+def arr_get(url: str, key: str, path: str, params: dict | None = None, timeout: int = 60):
+    q = "?" + urllib.parse.urlencode(params) if params else ""
+    req = urllib.request.Request(f"{url}/api/v3/{path}{q}", headers={"X-Api-Key": key, "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
+def arr_sync(force: bool = False) -> list:
+    """Complète la table arr_link avec l'historique de chaque instance : tout la première fois, puis seulement le
+    nouveau ; au plus une fois toutes les 5 min (force : bouton « Actualiser l'inventaire »). Renvoie les erreurs."""
+    if not force and time.time() - _ARR["at"] < 300:
+        return _ARR["warn"]
+    rows = db_rows("SELECT value FROM settings WHERE key='arr_sync'")
+    old, state, warn = (json.loads(rows[0]["value"]) if rows else {}), {}, []
+    for a in arr_list():
+        field, tv = ARR_KINDS[a["kind"]]
+        if not a.get("key"):
+            warn.append(f"{a['name']} : clé API manquante")
+            continue
+        st = old.get(a["id"]) or {}
+        since = st.get("since") if st.get("url") == a["url"] else None  # nouvelle adresse : tout relire
+        try:
+            recs = arr_get(a["url"], a["key"], "history/since", {"date": since or "2000-01-01T00:00:00Z",
+                                                                 "include" + field.capitalize(): "true"}, timeout=180)
+        except urllib.error.HTTPError as e:
+            warn.append(f"{a['name']} : " + ("clé API refusée" if e.code == 401 else f"erreur {e.code}"))
+            state[a["id"]] = st
+            continue
+        except Exception as e:
+            warn.append(f"{a['name']} injoignable : {getattr(e, 'reason', e)}")
+            state[a["id"]] = st
+            continue
+        out, last, tvdb = [], since or "", {}
+        for r in recs if isinstance(recs, list) else []:
+            last = max(last, str(r.get("date") or ""))
+            h, w = str(r.get("downloadId") or "").lower(), r.get(field) or {}
+            if not re.fullmatch(r"[0-9a-f]{40}", h) or not w:
+                continue
+            tmdb = w.get("tmdbId") or None
+            if not tmdb and tv and w.get("tvdbId"):  # Sonarr ancien : ID TMDB retrouvé par l'ID TVDB
+                if w["tvdbId"] not in tvdb:
+                    try:
+                        res = tmdb_get(f"/find/{int(w['tvdbId'])}", {"external_source": "tvdb_id"}).get("tv_results") or []
+                        tvdb[w["tvdbId"]] = res[0]["id"] if res else None
+                    except Exception:
+                        tvdb[w["tvdbId"]] = None
+                tmdb = tvdb[w["tvdbId"]]
+            out.append((h, tmdb, w.get("title") or "", str(w.get("year") or ""), int(tv), a["name"]))
+        if out:
+            with db_lock:
+                con = db()
+                try:
+                    con.executemany("INSERT OR REPLACE INTO arr_link (hash, tmdb, title, year, tv, src) VALUES (?,?,?,?,?,?)", out)
+                    con.commit()
+                finally:
+                    con.close()
+        state[a["id"]] = {"url": a["url"], "since": last or since}
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('arr_sync', ?)", (json.dumps(state),))
+    _ARR.update(at=time.time(), warn=warn)
+    return warn
+
+
+def arr_link(hashes: list):
+    """Film ou série trouvé par Radarr ou Sonarr pour l'un de ces torrents : {tmdb, title, year, tv, src}, sinon None."""
+    hs = [h.lower() for h in hashes if re.fullmatch(r"[0-9a-fA-F]{40}", h or "")]
+    if not hs:
+        return None
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            raise HTTPException(502, "Nettoyarr refuse l'accès : utilisateur et mot de passe dans l'onglet Réglages (ou .env)")
-        raise HTTPException(502, f"Nettoyarr : erreur {e.code} sur {path}")
-    except (urllib.error.URLError, OSError) as e:
-        raise HTTPException(502, f"Nettoyarr injoignable ({base}) : {getattr(e, 'reason', e)}")
-    except json.JSONDecodeError:
-        raise HTTPException(502, f"Nettoyarr : réponse illisible sur {path} (format changé ?)")
+        arr_sync()
+    except Exception:
+        pass
+    rows = db_rows(f"SELECT * FROM arr_link WHERE hash IN ({','.join('?' * len(hs))})", tuple(hs))
+    r = next((x for x in rows if x["tmdb"]), rows[0] if rows else None)
+    return {"tmdb": r["tmdb"], "title": r["title"], "year": r["year"], "tv": bool(r["tv"]),
+            "src": r["src"]} if r else None
 
 
 class ShapeCache:
@@ -2647,20 +2736,31 @@ class ShapeCache:
                 con.close()
 
 
-def inv_source() -> str:
-    """Source de l'inventaire du Repost : choix de l'onglet Réglages, sinon Nettoyarr s'il est renseigné, sinon qBittorrent."""
-    s = svc().get("inventory")
-    if s in ("qbittorrent", "nettoyarr"):
-        return s
-    return "nettoyarr" if repost_cfg()["nettoyarr"] else "qbittorrent"
+SAME_SIZE = 500 * 1024 * 1024  # au-delà, deux torrents de même taille exacte sont la même release
+
+
+def big_size(q, t: dict) -> int:
+    """Taille cumulée des gros fichiers d'un torrent (épisodes, MKV, ISO), sans .nfo, sample ni sous-titres à part :
+    deux cross-seeds d'une même release ont la même. -1 si la liste des fichiers est illisible (non mémorisé)."""
+    if (t.get("content_path") or "").lower().endswith((".mkv", ".iso", ".mp4", ".avi", ".m2ts", ".ts")):
+        return t.get("total_size") or t.get("size") or 0  # torrent d'un seul fichier
+    try:
+        files = q.json("torrents/files?hash=" + t["hash"]) or []
+    except Exception:
+        return -1
+    return sum(f.get("size") or 0 for f in files
+               if (f.get("size") or 0) >= BIG_FILE and not re.search(r"(?i)(^|[/._ -])sample([/._ -]|$)", f.get("name") or ""))
 
 
 def qbt_inventory() -> dict:
-    """Inventaire sans Nettoyarr, au même format : torrents de qBittorrent regroupés par contenu (les cross-seeds d'une
-    même release pointent sur le même fichier ou dossier), titre déduit du nom, tracker lu dans qBittorrent (en cache :
-    le champ « tracker » est vide pour un torrent arrêté)."""
+    """Inventaire du Repost : torrents de qBittorrent regroupés par contenu (les cross-seeds d'une même release pointent
+    sur le même fichier ou dossier), tracker lu dans qBittorrent (en cache : le champ « tracker » est vide pour un
+    torrent arrêté). Titre et ID TMDB donnés par Radarr ou Sonarr s'ils connaissent le torrent, sinon déduits du nom."""
     q = qbt()
+    warn = arr_sync()
+    links = {r["hash"]: r for r in db_rows("SELECT * FROM arr_link")}
     known = {r["hash"]: r["host"] for r in db_rows("SELECT hash, host FROM torrent_tracker")}
+    sigs, new_sig = {r["hash"]: r["big"] for r in db_rows("SELECT hash, big FROM torrent_big")}, {}
     new, groups = {}, {}
     for t in q.json("torrents/info") or []:
         h = t["hash"].lower()
@@ -2673,8 +2773,24 @@ def qbt_inventory() -> dict:
                 host = ""
         if host and known.get(h) != host:
             new[h] = host
-        key = t.get("content_path") or posixpath.join(t.get("save_path") or "", t.get("name") or "")
+        # cross-seeds d'une même release : mêmes gros fichiers (taille cumulée à l'octet près), même si chaque tracker a
+        # son dossier, un nom un peu différent ou ses propres .nfo ; petits torrents : même chemin de contenu
+        big = sigs.get(h)
+        if big is None:
+            big = big_size(q, t)
+            if big >= 0:
+                sigs[h] = new_sig[h] = big
+        key = (f"size:{big}" if big >= SAME_SIZE
+               else t.get("content_path") or posixpath.join(t.get("save_path") or "", t.get("name") or ""))
         groups.setdefault(key, []).append((t, host or "?"))
+    if new_sig:
+        with db_lock:
+            con = db()
+            try:
+                con.executemany("INSERT OR REPLACE INTO torrent_big (hash, big) VALUES (?,?)", list(new_sig.items()))
+                con.commit()
+            finally:
+                con.close()
     if new:
         with db_lock:
             con = db()
@@ -2686,27 +2802,28 @@ def qbt_inventory() -> dict:
     rels = []
     for key, items in groups.items():
         name = re.sub(r"\.(mkv|iso|mp4|avi|m2ts)$", "", items[0][0].get("name") or "", flags=re.I)
-        tv = is_series(name)
-        title, year = (series_title if tv else guess_title)(name)
+        a = next((links[t["hash"].lower()] for t, _ in items if t["hash"].lower() in links), None)
+        if a:
+            tv, title, year = bool(a["tv"]), a["title"], a["year"]
+        else:
+            tv = is_series(name)
+            title, year = (series_title if tv else guess_title)(name)
         rels.append({
             "id": hashlib.sha1(key.encode()).hexdigest()[:12], "kind": "serie" if tv else "film",
             "title": f"{title} ({year})" if year else title, "name": name,
+            "tmdb": a["tmdb"] if a else None, "arr": a["src"] if a else "",
             "size": max(t.get("size") or 0 for t, _ in items),
             "category": sorted({t.get("category") for t, _ in items if t.get("category")}),
             "trackers": [{"host": host, "hash": t["hash"], "name": t.get("name") or "", "seeds": t.get("num_complete")}
                          for t, host in items],
             "hashes": [t["hash"] for t, _ in items]})
-    return {"state": "ready", "built_at": time.time(), "releases": rels, "tracker_names": {}, "prowlarr_names": {},
-            "stats": {"warnings": []}, "source": "qbittorrent"}
+    names = {k: v for k, v in (svc().get("tracker_names") or {}).items() if v}
+    return {"state": "ready", "built_at": time.time(), "releases": rels, "tracker_names": names, "warnings": warn,
+            "source": "qbittorrent"}
 
 
 def inventory_data():
-    if inv_source() == "qbittorrent":
-        return qbt_inventory()
-    d = nettoyarr("/inventory")
-    if isinstance(d, dict):
-        d["source"] = "nettoyarr"
-    return d
+    return qbt_inventory()
 
 
 @app.get("/api/repost/inventory")
@@ -2749,6 +2866,7 @@ def api_repost_inventory():
             "hdf": chk["status"] if chk else None, "hdf_at": chk["at"] if chk else None,
             "job": {"id": job["id"], "status": job["status"]} if job else None,
             "masked": any((h or "").lower() in rmasked for h in hashes),
+            "tmdb": r.get("tmdb"), "arr": r.get("arr") or "",
         }
         if ready is not None and not any((h or "").lower() in ready for h in hashes):
             # inutilisable : téléchargement incomplet, fichiers manquants, ou torrent absent de qBittorrent.
@@ -2761,10 +2879,9 @@ def api_repost_inventory():
         else:
             rels.append(rel)
     shapes.save()
-    return {"state": "ready", "built_at": d.get("built_at"), "releases": rels, "source": d.get("source", "nettoyarr"),
-            "tracker_names": d.get("tracker_names") or {}, "prowlarr_names": d.get("prowlarr_names") or {},
-            # les avertissements Tautulli (visionnages) ne concernent pas le repost
-            "warnings": [w for w in (d.get("stats") or {}).get("warnings") or [] if not str(w).startswith("Tautulli")]
+    return {"state": "ready", "built_at": d.get("built_at"), "releases": rels, "source": "qbittorrent",
+            "tracker_names": d.get("tracker_names") or {},
+            "warnings": list(d.get("warnings") or [])
                         + ([] if ready is not None else ["qBittorrent injoignable : releases incomplètes non écartées."]),
             "hidden_list": hidden}
 
@@ -2793,15 +2910,9 @@ def api_repost_mask(spec: RepostMaskSpec):
 
 @app.post("/api/repost/inventory/refresh")
 def api_repost_inventory_refresh():
-    if inv_source() == "qbittorrent":
-        return {"job_id": None}  # lu à chaque affichage : rien à reconstruire
-    r = nettoyarr("/inventory/refresh", "POST")
-    return {"job_id": (r or {}).get("job_id")}
-
-
-@app.get("/api/repost/inventory/job")
-def api_repost_inventory_job(id: str):
-    return nettoyarr("/job?id=" + urllib.parse.quote(id))
+    """Inventaire lu dans qBittorrent à chaque affichage ; Radarr et Sonarr relus tout de suite."""
+    arr_sync(force=True)
+    return {"job_id": None}
 
 
 @app.get("/api/repost/rules")
@@ -2845,6 +2956,7 @@ class RepostRef(BaseModel):
     hashes: list[str]
     tmdb_id: int | None = None
     kind: str = ""                # catégorie choisie à la main (clé de REL_KINDS), sinon déduite du nom
+    variant: str = ""             # hash de la version à reposter parmi les cross-seeds (vide = la plus complète)
 
 
 class RepostSpec(BaseModel):
@@ -2852,6 +2964,7 @@ class RepostSpec(BaseModel):
     tmdb_id: int | None = None
     torrent: TorrentSpec = TorrentSpec()
     force: bool = False           # doublon mort ou release à arbitrer : upload confirmé quand même
+    variant: str = ""             # hash de la version à reposter parmi les cross-seeds (vide = la plus complète)
 
 
 class CrossSpec(BaseModel):
@@ -2859,7 +2972,7 @@ class CrossSpec(BaseModel):
     torrent_id: int
 
 
-def pick_source(q: Qbt, hashes: list, kind: str = "") -> dict:
+def pick_source(q: Qbt, hashes: list, kind: str = "", prefer: str = "") -> dict:
     """Le torrent de la release à reposter, complet : un film en MKV (seul ou dans un dossier), une saison complète
     (dossier d'épisodes MKV d'une même saison), ou un disque complet (dossier contenant BDMV, ou ISO) pour un Blu-ray
     Original. kind : catégorie choisie à la main, sinon déduite du nom. Hors remux, rien n'est renommé."""
@@ -2867,7 +2980,7 @@ def pick_source(q: Qbt, hashes: list, kind: str = "") -> dict:
     if not hashes:
         raise HTTPException(400, "Aucun hash de torrent valide")
     infos = {t["hash"]: t for t in q.json("torrents/info?hashes=" + "|".join(hashes)) or []}
-    why = []
+    why, cands = [], []
     for h in hashes:
         t = infos.get(h.lower()) or infos.get(h)
         if not t:
@@ -2914,13 +3027,38 @@ def pick_source(q: Qbt, hashes: list, kind: str = "") -> dict:
         stem = name if whole else Path(name).stem
         detected = rel_kind(stem, disc)
         k = kind if kind in REL_KINDS and (kind == "original") == disc else detected
-        return {"hash": t["hash"], "torrent": t.get("name") or "", "name": name, "stem": stem,
+        cands.append({"hash": t["hash"], "torrent": t.get("name") or "", "name": name, "stem": stem,
                 "clean": release_safe(stem) if k == "remux" else stem,  # seuls nos remux suivent la règle de nommage
                 "size": size, "qbt_path": qpath, "path": host, "folder": folder, "disc": disc,
                 "disc_dir": disc and not name.lower().endswith(".iso"), "season": season, "episodes": episodes,
                 "shape": shape, "kind": k, "kind_detected": detected,
-                "exists": Path(host).is_dir() if whole else Path(host).is_file()}
-    raise HTTPException(422, "Rien à reposter dans cette release : " + " ; ".join(why[:3]))
+                "exists": Path(host).is_dir() if whole else Path(host).is_file(),
+                "_files": files, "_tracker": t.get("tracker") or ""})
+    if not cands:
+        raise HTTPException(422, "Rien à reposter dans cette release : " + " ; ".join(why[:3]))
+    # versions de la même release (cross-seeds regroupés) : par défaut la plus complète (.nfo d'origine compris)
+    known = {r["hash"]: r["host"] for r in db_rows("SELECT hash, host FROM torrent_tracker")}
+    for c in cands:
+        fs, tr = c.pop("_files"), c.pop("_tracker")
+        c["host"] = urllib.parse.urlparse(tr).hostname or known.get(c["hash"].lower(), "") or "?"
+        c["total"] = sum(f.get("size") or 0 for f in fs)
+        c["nfo"] = sum(1 for f in fs if (f.get("name") or "").lower().endswith(".nfo"))
+        c["nfiles"] = len(fs)
+    pick = next((c for c in cands if prefer and c["hash"].lower() == prefer.lower()), None) \
+        or max(cands, key=lambda c: (c["nfo"], c["nfiles"]))
+    variants = [{"hash": c["hash"], "host": c["host"], "name": c["name"], "total": c["total"], "big": c["size"],
+                 "nfo": c["nfo"], "nfiles": c["nfiles"]} for c in cands]
+    # tailles à comparer aux torrents HDF pour reconnaître une release identique : chaque version, entière ou non
+    return {**pick, "variants": variants, "sizes": sorted({c["total"] for c in cands} | {c["size"] for c in cands})}
+
+
+def check_for(src: dict):
+    """Vérification HDF d'une release : celle de la version choisie, sinon celle d'une autre version du groupe."""
+    for h in [src["hash"]] + [v["hash"] for v in src.get("variants") or []]:
+        c = check_row(h)
+        if c:
+            return c
+    return None
 
 
 def check_row(h: str):
@@ -2950,24 +3088,25 @@ def tmdb_guess(title: str, year: str, langs=None, name: str = "", tv: bool = Fal
 @app.post("/api/repost/release")
 def api_repost_release(spec: RepostRef):
     q = qbt()
-    src = pick_source(q, spec.hashes, spec.kind)
-    check = check_row(src["hash"])
+    src = pick_source(q, spec.hashes, spec.kind, spec.variant)
+    check = check_for(src)
     if not spec.kind and check and check.get("kind") and check["kind"] != src["kind"]:
-        src = pick_source(q, spec.hashes, check["kind"])  # catégorie corrigée à la main lors de la vérification
+        src = pick_source(q, spec.hashes, check["kind"], spec.variant)  # catégorie corrigée lors de la vérification
     stem = src["stem"]
-    series = src["season"] or is_series(stem)
-    title, year = series_title(stem) if series else guess_title(stem)
+    arr = arr_link(spec.hashes)  # Radarr ou Sonarr connaît ce torrent : titre et ID TMDB exacts
+    series = src["season"] or is_series(stem) or bool(arr and arr["tv"])
+    title, year = (arr["title"], arr["year"]) if arr else series_title(stem) if series else guess_title(stem)
     pick, results = tmdb_guess(title, year, name=stem, tv=series)
     known = release_meta(Path(src["path"]))["tmdb_id"]
     if check and check.get("kind", "remux") != src["kind"]:
         check = None  # vérifiée sous une autre catégorie : à refaire
-    tmdb_id = (check or {}).get("tmdb_id") or known or (pick or {}).get("id")
+    tmdb_id = (check or {}).get("tmdb_id") or known or (arr or {}).get("tmdb") or (pick or {}).get("id")
     jobs = db_rows("SELECT id, status FROM jobs WHERE kind='repost' AND source=? ORDER BY id DESC LIMIT 1", (src["hash"],))
     elig, why = hdf_eligibility(src["name"], src["shape"] if not src["disc"] else "disc", src["kind"])
     mi = db_rows("SELECT result FROM repost_mi WHERE hash=?", (src["hash"],))
     return {**src, "mi": json.loads(mi[0]["result"]) if mi else None,
             "title": title, "year": year, "series": series, "kinds": REL_KINDS, "elig": elig, "elig_why": why,
-            "tmdb_id": tmdb_id, "tmdb_results": results, "check": check, "job": jobs[0] if jobs else None}
+            "tmdb_id": tmdb_id, "tmdb_results": results, "arr": arr, "check": check, "job": jobs[0] if jobs else None}
 
 
 SCAN_LAB = {"absent": "Vaut le coup", "review": "À juger", "dupe": "Doublon", "replaceable": "Sans seeder : note modo ?",
@@ -3078,7 +3217,7 @@ def classify(src: dict, found: list, approx: bool = False, new: bool = False) ->
             cat = False  # autre saison de la série : pas un doublon
         close = bool(size) and abs(size - src["size"]) <= rc["size_tolerance"] * max(size, src["size"])
         langs = same_langs(ours, lang_sig(t.get("fileName") or ""))
-        same = size == src["size"] or (approx and bool(size) and abs(size - src["size"]) <= 0.003 * size)
+        same = size == src["size"] or size in src.get("sizes", ()) or (approx and bool(size) and abs(size - src["size"]) <= 0.003 * size)
         if same and new and cat:
             k = "dupe"  # nouvelle release : même taille = même disque déjà remuxé, doublon
         elif same and not new:
@@ -3098,7 +3237,7 @@ def classify(src: dict, found: list, approx: bool = False, new: bool = False) ->
             "dead": t.get("seeders") == 0,  # l'API ne donne pas la dernière activité : 0 seeder = mort probable
             # candidat au cross-seed : même taille exacte ; la liste des fichiers du .torrent HDF est comparée au
             # moment du cross-seed, et qBittorrent revérifie tout avant de seeder
-            "crossseed": size == src["size"],
+            "crossseed": size == src["size"] or size in src.get("sizes", ()),
         })
     order = {"identical": 0, "dupe": 1, "review": 2, "same": 3, "other": 4}
     items.sort(key=lambda x: (order[x["kind"]], -(x["seeders"] or 0)))
@@ -3367,11 +3506,12 @@ class AnalyzeSpec(BaseModel):
     hashes: list[str]
     kind: str = ""
     tmdb_id: int | None = None
+    variant: str = ""             # hash de la version à reposter parmi les cross-seeds (vide = la plus complète)
 
 
 @app.post("/api/repost/analyze")
 def api_repost_analyze(spec: AnalyzeSpec):
-    src = pick_source(qbt(), spec.hashes, spec.kind)
+    src = pick_source(qbt(), spec.hashes, spec.kind, spec.variant)
     if src["disc"]:
         raise HTTPException(422, "FULL Blu-ray : contenu intact, rien à analyser ici (BDInfo fait au moment du repost)")
     f = Path(src["episodes"][0]) if src["season"] else Path(src["path"])
@@ -3392,7 +3532,7 @@ def api_repost_analyze(spec: AnalyzeSpec):
 @app.post("/api/repost/check")
 def api_repost_check(spec: RepostRef):
     """Vérification complète d'une release, depuis son détail."""
-    src = pick_source(qbt(), spec.hashes, spec.kind)
+    src = pick_source(qbt(), spec.hashes, spec.kind, spec.variant)
     if src["kind"] not in REL_KINDS:
         raise HTTPException(422, "WEBRip : refusé sur HD-Forever" if src["kind"] == "webrip"
                             else "Catégorie indéterminée d'après le nom : choisis-la dans le détail")
@@ -3419,7 +3559,7 @@ def api_repost_checkall(spec: BulkSpec):
 
 @app.get("/api/repost/checks")
 def api_repost_checks():
-    """Statut HDF de chaque release vérifiée (hash → statut), pour rafraîchir la liste sans relire Nettoyarr."""
+    """Statut HDF de chaque release vérifiée (hash → statut), pour rafraîchir la liste sans relire qBittorrent."""
     return {r["hash"]: {"status": r["status"], "at": r["at"]} for r in db_rows("SELECT hash, status, at FROM repost_checks")}
 
 
@@ -3431,10 +3571,13 @@ def api_repost_crossseed(spec: CrossSpec):
     qBittorrent et ne le démarre qu'à 100 %, sinon il le retire (sans toucher aux fichiers)."""
     q = qbt()
     src = pick_source(q, spec.hashes)
-    chk = check_row(src["hash"])
+    chk = check_for(src)
     item = next((i for i in (chk or {}).get("items", []) if i["id"] == spec.torrent_id), None)
     if not item or not item["crossseed"]:
         raise HTTPException(409, "Ce torrent HDF n'a pas été vérifié comme identique à notre release")
+    same = next((v["hash"] for v in src["variants"] if item["size"] in (v["total"], v["big"])), None)
+    if same and same != src["hash"]:
+        src = pick_source(q, spec.hashes, prefer=same)  # la version qui a exactement le contenu du torrent HDF
     api = HdfApi()
     try:
         with urllib.request.urlopen(urllib.request.Request(api.download_url(spec.torrent_id),
@@ -3474,10 +3617,10 @@ def api_repost_crossseed(spec: CrossSpec):
 @app.post("/api/repost/upload")
 def api_repost_upload(spec: RepostSpec):
     q = qbt()
-    chk = check_row(pick_source(q, spec.hashes)["hash"])
+    chk = check_for(pick_source(q, spec.hashes, prefer=spec.variant))
     if not chk:
         raise HTTPException(409, "Vérifie d'abord la release sur HDF")
-    src = pick_source(q, spec.hashes, chk.get("kind") or "remux")  # la catégorie de la vérification fait foi
+    src = pick_source(q, spec.hashes, chk.get("kind") or "remux", spec.variant)  # la catégorie vérifiée fait foi
     kind = src["kind"]
     if kind not in REL_KINDS:
         raise HTTPException(422, "WEBRip : refusé sur HD-Forever" if kind == "webrip" else "Catégorie indéterminée")

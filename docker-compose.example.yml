@@ -15,8 +15,6 @@ services:
       - QBT_API_KEY=${QBT_API_KEY:-}
       - TMDB_API_KEY=${TMDB_API_KEY:-}
       - HDF_API_KEY=${HDF_API_KEY:-}
-      - NETTOYARR_USER=${NETTOYARR_USER:-}
-      - NETTOYARR_PASS=${NETTOYARR_PASS:-}
     volumes:
       - type: bind                          # un seul montage : indispensable pour les hardlinks
         source: /volume1/media
