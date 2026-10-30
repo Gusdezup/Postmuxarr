@@ -1,19 +1,20 @@
 # Service postmuxarr, à placer dans le docker-compose.yml du stack (chemins relatifs au dossier du stack).
-# Secrets dans le .env du stack : QBT_API_KEY, TMDB_API_KEY, HDF_API_KEY, NETTOYARR_USER, NETTOYARR_PASS.
+# Clés et mots de passe : de préférence dans l'onglet Réglages. Les variables ci-dessous (fichier .env du stack)
+# restent acceptées en repli et peuvent être omises.
 services:
   postmuxarr:
     build: ./postmuxarr
     image: postmuxarr
     container_name: postmuxarr
-    user: "1026:100"
+    user: "1026:100"                      # utilisateur:groupe propriétaires des médias (id -u ; id -g)
     environment:
       - TZ=Europe/Paris
-      - SOURCE_ROOT=/volume1/media/downloads
-      - OUTPUT_DIR=/volume1/media/remux
-      - PLEX_DIR=/volume1/media/films
-      - QBT_API_KEY=${QBT_API_KEY}
-      - TMDB_API_KEY=${TMDB_API_KEY}
-      - HDF_API_KEY=${HDF_API_KEY}
+      - SOURCE_ROOT=/volume1/media/downloads   # sources des remux
+      - OUTPUT_DIR=/volume1/media/remux        # remux produits
+      - PLEX_DIR=/volume1/media/films          # bibliothèque (hardlinks)
+      - QBT_API_KEY=${QBT_API_KEY:-}
+      - TMDB_API_KEY=${TMDB_API_KEY:-}
+      - HDF_API_KEY=${HDF_API_KEY:-}
       - NETTOYARR_USER=${NETTOYARR_USER:-}
       - NETTOYARR_PASS=${NETTOYARR_PASS:-}
     volumes:
@@ -21,8 +22,8 @@ services:
         source: /volume1/media
         target: /volume1/media
         bind:
-          propagation: rslave           # ISO montés par DSM visibles sans redémarrer
-      - ./postmuxarr-data:/data
+          propagation: rslave               # ISO montés par l'hôte visibles sans redémarrer
+      - ./postmuxarr-data:/data             # base de l'app : jobs, réglages, rapports BDInfo
       - ./postmuxarr/config.yml:/app/config.yml:ro
     ports:
       - "8790:8790"

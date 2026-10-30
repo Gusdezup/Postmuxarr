@@ -80,8 +80,57 @@ class Cancelled(Exception):
 # =========================================================================== utilitaires
 
 def load_config() -> dict:
+    """config.yml, puis les connexions réglées dans l'interface par-dessus."""
     with open(CONFIG_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        cfg = yaml.safe_load(f) or {}
+    return apply_conn(cfg, conn_settings())
+
+
+def conn_settings() -> dict:
+    """Connexions enregistrées depuis l'onglet Réglages ({} si aucune, ou base pas encore créée)."""
+    try:
+        rows = db_rows("SELECT value FROM settings WHERE key='connections'")
+    except Exception:
+        return {}
+    return json.loads(rows[0]["value"]) if rows else {}
+
+
+def apply_conn(cfg: dict, c: dict) -> dict:
+    """Réglages de l'interface prioritaires ; secrets vides = repli sur .env (QBT_API_KEY, QBT_PASS)."""
+    if not c:
+        return cfg
+    q = dict(cfg.get("qbittorrent") or {})
+    for src, dst in (("qbt_url", "url"), ("qbt_user", "username"), ("path_map", "path_map"),
+                     ("qbt_category", "category"), ("qbt_tags", "tags")):
+        if src in c:
+            q[dst] = c[src]
+    for src, dst in (("qbt_key", "api_key"), ("qbt_pass", "password")):
+        if c.get(src):
+            q[dst] = c[src]
+    r = dict(cfg.get("repost") or {})
+    if "repost_category" in c:
+        r["category"] = c["repost_category"]
+    return {**cfg, "qbittorrent": q, "repost": r}
+
+
+SVC_SECRETS = {"tmdb_key": "TMDB_API_KEY", "hdf_key": "HDF_API_KEY", "nettoyarr_pass": "NETTOYARR_PASS"}
+
+
+def svc() -> dict:
+    """Clés et services réglés dans l'onglet Réglages ({} si aucun, ou base pas encore créée)."""
+    try:
+        rows = db_rows("SELECT value FROM settings WHERE key='services'")
+    except Exception:
+        return {}
+    return json.loads(rows[0]["value"]) if rows else {}
+
+
+def tmdb_key() -> str:
+    return (svc().get("tmdb_key") or os.environ.get("TMDB_API_KEY", "")).strip()
+
+
+def hdf_key() -> str:
+    return (svc().get("hdf_key") or os.environ.get("HDF_API_KEY", "")).strip().strip("'\"").strip()  # guillemets recopiés
 
 
 def within(p: Path, root: Path) -> bool:
@@ -534,15 +583,15 @@ class Qbt:
     def __init__(self, cfg: dict):
         q = cfg.get("qbittorrent") or {}
         self.url = (q.get("url") or "").rstrip("/")
-        self.api_key = os.environ.get("QBT_API_KEY", "").strip()   # qBittorrent >= 5.2.0
+        self.api_key = (q.get("api_key") or os.environ.get("QBT_API_KEY", "")).strip()   # qBittorrent >= 5.2.0
         self.user = q.get("username") or ""
-        self.password = os.environ.get("QBT_PASS", "")
+        self.password = q.get("password") or os.environ.get("QBT_PASS", "")
         self.path_map = q.get("path_map") or {}
         self.category = q.get("category") or ""
         tags = q.get("tags") or []
         self.tags = ",".join(tags) if isinstance(tags, list) else str(tags)
         if not self.url:
-            raise RuntimeError("qBittorrent non configuré (section qbittorrent de config.yml)")
+            raise RuntimeError("qBittorrent non configuré : onglet Réglages (ou section qbittorrent de config.yml)")
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
 
     def _headers(self) -> dict:
@@ -715,7 +764,7 @@ def hdf_tracker(cfg: dict) -> dict:
 
 def repost_cfg() -> dict:
     r = load_config().get("repost") or {}
-    return {"nettoyarr": (r.get("nettoyarr_url") or "").rstrip("/"),
+    return {"nettoyarr": (svc().get("nettoyarr_url") or r.get("nettoyarr_url") or "").rstrip("/"),
             "category": r.get("category", "repost") or "",
             "hdf_api": (r.get("hdf_api") or "https://hdf.world/api.php").rstrip("/"),
             # hardlinks au nom nettoyé : le fichier de l'autre seed garde son nom
@@ -739,10 +788,10 @@ def api_config():
     cfg["qbittorrent"] = {"url": q.get("url"), "configured": bool(q.get("url"))}  # jamais le mot de passe
     for t in (cfg.get("torrent") or {}).get("trackers") or []:
         t.pop("announce", None)  # l'URL contient la passkey : elle reste côté serveur
-    cfg["tmdb"] = bool(os.environ.get("TMDB_API_KEY", "").strip())
+    cfg["tmdb"] = bool(tmdb_key())
     cfg["paths"] = {"sources": str(SOURCE_ROOT), "output": str(OUTPUT_DIR), "start": str(START_DIR), "plex": str(PLEX_DIR)}
     rc = repost_cfg()
-    cfg["repost"] = {"nettoyarr": bool(rc["nettoyarr"]), "hdf_api": bool(os.environ.get("HDF_API_KEY", "").strip()),
+    cfg["repost"] = {"nettoyarr": bool(rc["nettoyarr"]), "hdf_api": bool(hdf_key()),
                      "category": rc["category"], "hdf_host": hdf_host, "link_dir": str(rc["link_dir"]), "team": rc["team"]}
     return cfg
 
@@ -784,6 +833,179 @@ def api_settings_tag(spec: TagSpec):
 def rules_payload() -> dict:
     base = rules_base()
     return {"rules": hdf_rules(), "defaults": {**base, "release_tag": ""}, "config_group": load_config().get("group") or ""}
+
+
+class ConnSpec(BaseModel):
+    url: str = ""
+    username: str = ""
+    password: str = ""            # vide = inchangé
+    api_key: str = ""             # vide = inchangé
+    path_map: list[list[str]] = []
+    category: str = ""
+    tags: list[str] = []
+    repost_category: str = ""
+
+
+def conn_merged(spec: ConnSpec) -> dict:
+    url = spec.url.strip().rstrip("/")
+    if url and not re.match(r"^https?://[^\s/]+", url):
+        raise HTTPException(400, "Adresse de qBittorrent invalide : http://IP:port")
+    pm = {}
+    for row in spec.path_map:
+        if len(row) != 2 or not all(str(x).strip() for x in row):
+            continue
+        h, c = (str(x).strip().rstrip("/") or "/" for x in row)
+        if not (h.startswith("/") and c.startswith("/")):
+            raise HTTPException(400, f"Chemins absolus attendus : {h} → {c}")
+        pm[h] = c
+    old = conn_settings()
+    return {"qbt_url": url, "qbt_user": spec.username.strip(), "path_map": pm,
+            "qbt_category": spec.category.strip(), "qbt_tags": [t.strip() for t in spec.tags if t.strip()],
+            "repost_category": spec.repost_category.strip(),
+            "qbt_key": spec.api_key.strip() or old.get("qbt_key", ""), "qbt_pass": spec.password or old.get("qbt_pass", "")}
+
+
+def conn_payload() -> dict:
+    cfg, c = load_config(), conn_settings()
+    q = cfg.get("qbittorrent") or {}
+    tags = q.get("tags") or []
+    env_key, env_pass = os.environ.get("QBT_API_KEY", "").strip(), os.environ.get("QBT_PASS", "")
+    return {"url": q.get("url") or "", "username": q.get("username") or "", "path_map": q.get("path_map") or {},
+            "category": q.get("category") or "",
+            "tags": tags if isinstance(tags, list) else [t.strip() for t in str(tags).split(",") if t.strip()],
+            "repost_category": (cfg.get("repost") or {}).get("category", "repost") or "",
+            "has_key": bool(c.get("qbt_key") or env_key), "key_source": "réglages" if c.get("qbt_key") else ".env" if env_key else "",
+            "has_pass": bool(c.get("qbt_pass") or env_pass), "pass_source": "réglages" if c.get("qbt_pass") else ".env" if env_pass else "",
+            "source": "réglages" if c else "config.yml"}
+
+
+@app.get("/api/connections")
+def api_connections_get():
+    return conn_payload()
+
+
+@app.put("/api/connections")
+def api_connections_put(spec: ConnSpec):
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('connections', ?)", (json.dumps(conn_merged(spec)),))
+    return conn_payload()
+
+
+@app.post("/api/connections/reset")
+def api_connections_reset():
+    """Retour à config.yml et .env (secrets saisis dans l'interface effacés)."""
+    db_exec("DELETE FROM settings WHERE key='connections'")
+    return conn_payload()
+
+
+@app.post("/api/connections/test")
+def api_connections_test(spec: ConnSpec):
+    """Essai sans enregistrer : connexion, puis torrents dont Postmuxarr voit le dossier (correspondance des chemins)."""
+    try:
+        q = Qbt(apply_conn(load_config(), conn_merged(spec)))
+        version = q.login()
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    paths = [{"host": h, "cont": c, "exists": Path(h).is_dir()} for h, c in (q.path_map or {}).items()]
+    try:
+        ts = q.json("torrents/info") or []
+    except Exception as e:
+        return {"ok": True, "version": version, "paths": paths, "error": f"liste des torrents illisible : {e}"}
+    seen = {}
+    for t in ts:
+        p = q.unmap_path(t.get("save_path") or "")
+        if p not in seen:
+            seen[p] = Path(p).is_dir()
+    visible = sum(1 for t in ts if seen.get(q.unmap_path(t.get("save_path") or "")))
+    missing = sorted({t.get("save_path") or "" for t in ts if not seen.get(q.unmap_path(t.get("save_path") or ""))})[:5]
+    return {"ok": True, "version": version, "paths": paths, "visible": visible, "total": len(ts), "missing": missing}
+
+
+class SvcSpec(BaseModel):
+    tmdb_key: str = ""            # secrets : vide = inchangé
+    hdf_key: str = ""
+    nettoyarr_url: str = ""
+    nettoyarr_user: str = ""
+    nettoyarr_pass: str = ""
+    inventory: str = ""           # source de l'inventaire du Repost : qbittorrent, nettoyarr, vide = automatique
+    clear: list[str] = []         # secrets saisis dans l'interface à effacer (retour à .env)
+
+
+def svc_merged(spec: SvcSpec) -> dict:
+    url = spec.nettoyarr_url.strip().rstrip("/")
+    if url and not re.match(r"^https?://[^\s/]+", url):
+        raise HTTPException(400, "Adresse de Nettoyarr invalide : http://IP:port")
+    old = svc()
+    inv = spec.inventory if spec.inventory in ("qbittorrent", "nettoyarr") else ""
+    if inv == "nettoyarr" and not (url or (load_config().get("repost") or {}).get("nettoyarr_url")):
+        raise HTTPException(400, "Inventaire Nettoyarr choisi : renseigne son adresse")
+    out = {"nettoyarr_url": url, "nettoyarr_user": spec.nettoyarr_user.strip(), "inventory": inv}
+    for k in SVC_SECRETS:
+        v = getattr(spec, k).strip() if k != "nettoyarr_pass" else getattr(spec, k)
+        out[k] = "" if k in spec.clear else (v or old.get(k, ""))
+    return out
+
+
+def svc_payload() -> dict:
+    s, rc = svc(), load_config().get("repost") or {}
+    sec = {k: {"set": bool(s.get(k) or os.environ.get(e, "").strip()),
+               "source": "réglages" if s.get(k) else ".env" if os.environ.get(e, "").strip() else ""}
+           for k, e in SVC_SECRETS.items()}
+    return {**sec, "nettoyarr_url": s.get("nettoyarr_url") or (rc.get("nettoyarr_url") or "").rstrip("/"),
+            "nettoyarr_user": s.get("nettoyarr_user") or os.environ.get("NETTOYARR_USER", ""),
+            "inventory": s.get("inventory") or "", "inventory_used": inv_source(),
+            "source": "réglages" if s else "config.yml"}
+
+
+@app.get("/api/services")
+def api_services_get():
+    return svc_payload()
+
+
+@app.put("/api/services")
+def api_services_put(spec: SvcSpec):
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('services', ?)", (json.dumps(svc_merged(spec)),))
+    return svc_payload()
+
+
+@app.post("/api/services/test")
+def api_services_test(spec: SvcSpec):
+    """Essai sans enregistrer de chaque service renseigné : TMDB, HD-Forever (1 requête, cadence de l'API), Nettoyarr."""
+    m, out = svc_merged(spec), {}
+    tk = m["tmdb_key"] or ("" if "tmdb_key" in spec.clear else tmdb_key())
+    if tk:
+        h, q = ({"Authorization": f"Bearer {tk}"}, "") if tk.startswith("eyJ") else ({}, "?api_key=" + urllib.parse.quote(tk))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(f"{TMDB_BASE}/configuration{q}",
+                                                               headers={"Accept": "application/json", **h}), timeout=15):
+                out["tmdb"] = {"ok": True}
+        except urllib.error.HTTPError as e:
+            out["tmdb"] = {"ok": False, "error": "clé refusée" if e.code == 401 else f"erreur {e.code}"}
+        except Exception as e:
+            out["tmdb"] = {"ok": False, "error": f"injoignable : {getattr(e, 'reason', e)}"}
+    hk = m["hdf_key"] or ("" if "hdf_key" in spec.clear else hdf_key())
+    if hk:
+        api = HdfApi.__new__(HdfApi)  # sans __init__ : la clé testée, pas celle enregistrée
+        api.key, api.url = hk.strip("'\"").strip(), repost_cfg()["hdf_api"]
+        try:
+            api.call("browse", searchstr="test", group_results=0, limit=1)
+            out["hdf"] = {"ok": True}
+        except HTTPException as e:
+            out["hdf"] = {"ok": False, "error": str(e.detail).removeprefix("HDF : ")}
+    url = m["nettoyarr_url"] or ((load_config().get("repost") or {}).get("nettoyarr_url") or "").rstrip("/")
+    if url:
+        user = m["nettoyarr_user"] or os.environ.get("NETTOYARR_USER", "")
+        pw = m["nettoyarr_pass"] or ("" if "nettoyarr_pass" in spec.clear else os.environ.get("NETTOYARR_PASS", ""))
+        h = {"Accept": "application/json"}
+        if user or pw:
+            h["Authorization"] = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url + "/inventory", headers=h), timeout=15):
+                out["nettoyarr"] = {"ok": True}
+        except urllib.error.HTTPError as e:
+            out["nettoyarr"] = {"ok": False, "error": "accès refusé (utilisateur, mot de passe ?)" if e.code == 401 else f"erreur {e.code}"}
+        except Exception as e:
+            out["nettoyarr"] = {"ok": False, "error": f"injoignable : {getattr(e, 'reason', e)}"}
+    return out
 
 
 @app.get("/api/rules")
@@ -1082,9 +1304,9 @@ def api_bdinfo_report(path: str):
 
 
 def tmdb_get(path: str, params: dict) -> dict:
-    key = os.environ.get("TMDB_API_KEY", "").strip()
+    key = tmdb_key()
     if not key:
-        raise HTTPException(503, "Clé TMDB absente : ajoute TMDB_API_KEY dans stackmux/.env")
+        raise HTTPException(503, "Clé TMDB absente : onglet Réglages (ou TMDB_API_KEY dans .env)")
     headers = {"Accept": "application/json"}
     if key.startswith("eyJ"):          # jeton de lecture v4
         headers["Authorization"] = f"Bearer {key}"
@@ -1374,6 +1596,7 @@ def init_db():
     db_exec("CREATE TABLE IF NOT EXISTS hdf_scan (path TEXT PRIMARY KEY, result TEXT, at REAL)")
     db_exec("CREATE TABLE IF NOT EXISTS torrent_shape2 (hash TEXT PRIMARY KEY, shape TEXT)")  # v2 : saisons
     db_exec("CREATE TABLE IF NOT EXISTS repost_mi (hash TEXT PRIMARY KEY, result TEXT, at REAL)")
+    db_exec("CREATE TABLE IF NOT EXISTS torrent_tracker (hash TEXT PRIMARY KEY, host TEXT)")
     # jobs coupés par un redémarrage : on supprime ce qui est partiel
     for j in db_rows("SELECT id, kind, output FROM jobs WHERE status='running'"):
         if j["kind"] in ("remux", None) and j["output"]:
@@ -2206,9 +2429,11 @@ def nettoyarr(path: str, method: str = "GET"):
     """Lecture de Nettoyarr comme simple client (routes de son explorateur), HTTP Basic si son auth est active."""
     base = repost_cfg()["nettoyarr"]
     if not base:
-        raise HTTPException(503, "Nettoyarr non configuré : repost.nettoyarr_url dans config.yml")
+        raise HTTPException(503, "Nettoyarr non configuré : onglet Réglages (ou repost.nettoyarr_url dans config.yml)")
     headers = {"Accept": "application/json"}
-    user, pw = os.environ.get("NETTOYARR_USER", ""), os.environ.get("NETTOYARR_PASS", "")
+    s = svc()
+    user = s.get("nettoyarr_user") or os.environ.get("NETTOYARR_USER", "")
+    pw = s.get("nettoyarr_pass") or os.environ.get("NETTOYARR_PASS", "")
     if user or pw:
         headers["Authorization"] = "Basic " + base64.b64encode(f"{user}:{pw}".encode()).decode()
     req = urllib.request.Request(base + path, data=b"" if method == "POST" else None, method=method, headers=headers)
@@ -2217,7 +2442,7 @@ def nettoyarr(path: str, method: str = "GET"):
             return json.load(r)
     except urllib.error.HTTPError as e:
         if e.code == 401:
-            raise HTTPException(502, "Nettoyarr refuse l'accès : NETTOYARR_USER / NETTOYARR_PASS dans stackmux/.env")
+            raise HTTPException(502, "Nettoyarr refuse l'accès : utilisateur et mot de passe dans l'onglet Réglages (ou .env)")
         raise HTTPException(502, f"Nettoyarr : erreur {e.code} sur {path}")
     except (urllib.error.URLError, OSError) as e:
         raise HTTPException(502, f"Nettoyarr injoignable ({base}) : {getattr(e, 'reason', e)}")
@@ -2269,9 +2494,71 @@ class ShapeCache:
                 con.close()
 
 
+def inv_source() -> str:
+    """Source de l'inventaire du Repost : choix de l'onglet Réglages, sinon Nettoyarr s'il est renseigné, sinon qBittorrent."""
+    s = svc().get("inventory")
+    if s in ("qbittorrent", "nettoyarr"):
+        return s
+    return "nettoyarr" if repost_cfg()["nettoyarr"] else "qbittorrent"
+
+
+def qbt_inventory() -> dict:
+    """Inventaire sans Nettoyarr, au même format : torrents de qBittorrent regroupés par contenu (les cross-seeds d'une
+    même release pointent sur le même fichier ou dossier), titre déduit du nom, tracker lu dans qBittorrent (en cache :
+    le champ « tracker » est vide pour un torrent arrêté)."""
+    q = qbt()
+    known = {r["hash"]: r["host"] for r in db_rows("SELECT hash, host FROM torrent_tracker")}
+    new, groups = {}, {}
+    for t in q.json("torrents/info") or []:
+        h = t["hash"].lower()
+        host = urllib.parse.urlparse(t.get("tracker") or "").hostname or known.get(h, "")
+        if not host:
+            try:
+                urls = [x.get("url") or "" for x in q.trackers(h) if not str(x.get("url", "")).startswith("**")]
+                host = next((urllib.parse.urlparse(u).hostname for u in urls if urllib.parse.urlparse(u).hostname), "") or ""
+            except Exception:
+                host = ""
+        if host and known.get(h) != host:
+            new[h] = host
+        key = t.get("content_path") or posixpath.join(t.get("save_path") or "", t.get("name") or "")
+        groups.setdefault(key, []).append((t, host or "?"))
+    if new:
+        with db_lock:
+            con = db()
+            try:
+                con.executemany("INSERT OR REPLACE INTO torrent_tracker (hash, host) VALUES (?,?)", list(new.items()))
+                con.commit()
+            finally:
+                con.close()
+    rels = []
+    for key, items in groups.items():
+        name = re.sub(r"\.(mkv|iso|mp4|avi|m2ts)$", "", items[0][0].get("name") or "", flags=re.I)
+        tv = is_series(name)
+        title, year = (series_title if tv else guess_title)(name)
+        rels.append({
+            "id": hashlib.sha1(key.encode()).hexdigest()[:12], "kind": "serie" if tv else "film",
+            "title": f"{title} ({year})" if year else title, "name": name,
+            "size": max(t.get("size") or 0 for t, _ in items),
+            "category": sorted({t.get("category") for t, _ in items if t.get("category")}),
+            "trackers": [{"host": host, "hash": t["hash"], "name": t.get("name") or "", "seeds": t.get("num_complete")}
+                         for t, host in items],
+            "hashes": [t["hash"] for t, _ in items]})
+    return {"state": "ready", "built_at": time.time(), "releases": rels, "tracker_names": {}, "prowlarr_names": {},
+            "stats": {"warnings": []}, "source": "qbittorrent"}
+
+
+def inventory_data():
+    if inv_source() == "qbittorrent":
+        return qbt_inventory()
+    d = nettoyarr("/inventory")
+    if isinstance(d, dict):
+        d["source"] = "nettoyarr"
+    return d
+
+
 @app.get("/api/repost/inventory")
 def api_repost_inventory():
-    d = nettoyarr("/inventory")
+    d = inventory_data()
     if not isinstance(d, dict) or d.get("state") != "ready":
         d = d if isinstance(d, dict) else {}
         return {"state": d.get("state") or "error", "job_id": d.get("job_id"), "error": d.get("error")}
@@ -2321,7 +2608,7 @@ def api_repost_inventory():
         else:
             rels.append(rel)
     shapes.save()
-    return {"state": "ready", "built_at": d.get("built_at"), "releases": rels,
+    return {"state": "ready", "built_at": d.get("built_at"), "releases": rels, "source": d.get("source", "nettoyarr"),
             "tracker_names": d.get("tracker_names") or {}, "prowlarr_names": d.get("prowlarr_names") or {},
             # les avertissements Tautulli (visionnages) ne concernent pas le repost
             "warnings": [w for w in (d.get("stats") or {}).get("warnings") or [] if not str(w).startswith("Tautulli")]
@@ -2353,6 +2640,8 @@ def api_repost_mask(spec: RepostMaskSpec):
 
 @app.post("/api/repost/inventory/refresh")
 def api_repost_inventory_refresh():
+    if inv_source() == "qbittorrent":
+        return {"job_id": None}  # lu à chaque affichage : rien à reconstruire
     r = nettoyarr("/inventory/refresh", "POST")
     return {"job_id": (r or {}).get("job_id")}
 
@@ -2491,7 +2780,7 @@ def check_row(h: str):
 def tmdb_guess(title: str, year: str, langs=None, name: str = "", tv: bool = False):
     """Premier résultat TMDB (film, ou série si tv) après classement, plus la liste pour corriger à la main.
     partial = trouvé seulement sur un début du titre (nom tronqué) : à confirmer."""
-    if not os.environ.get("TMDB_API_KEY", "").strip() or not title:
+    if not tmdb_key() or not title:
         return None, []
     try:
         raw, used = tmdb_find(title, year, tv)
@@ -2544,10 +2833,10 @@ class HdfApi:
     last = 0.0
 
     def __init__(self):
-        self.key = os.environ.get("HDF_API_KEY", "").strip().strip("'\"").strip()  # guillemets recopiés dans .env
+        self.key = hdf_key().strip("'\"").strip()  # guillemets recopiés dans .env
         self.url = repost_cfg()["hdf_api"]
         if not self.key:
-            raise HTTPException(503, "Clé API HD-Forever absente : HDF_API_KEY dans stackmux/.env")
+            raise HTTPException(503, "Clé API HD-Forever absente : onglet Réglages (ou HDF_API_KEY dans .env)")
 
     def call(self, endpoint: str, **params) -> dict:
         q = urllib.parse.urlencode({"endpoint": endpoint, **{k: v for k, v in params.items() if v not in (None, "")}})
@@ -2901,7 +3190,7 @@ def mi_analyze(tracks: list, kind: str, orig: str = "", anim: bool = False, team
 def tmdb_meta(tmdb_id, tv: bool = False) -> dict:
     """Langue originale et genres TMDB (16 = animation) d'un film ou d'une série."""
     out = {"original_language": "", "genres": []}
-    if not tmdb_id or not os.environ.get("TMDB_API_KEY", "").strip():
+    if not tmdb_id or not tmdb_key():
         return out
     try:
         d = tmdb_get(f"/{'tv' if tv else 'movie'}/{int(tmdb_id)}", {})
@@ -3202,7 +3491,7 @@ def scan_disc(disc: Path, refresh: bool = False) -> dict:
         out["tmdb_title"] = f"{pick['title']} ({pick.get('year') or '?'})"
         out["partial"] = bool(pick.get("partial"))
         out["tmdb_query"] = pick.get("query") or title
-    elif os.environ.get("TMDB_API_KEY", "").strip():
+    elif tmdb_key():
         # pas de film : une recherche HDF par ce titre dirait « absent » à tort
         return {**out, "status": "nofilm", "error": f"Rien sur TMDB pour « {title} »"}
     spec = LookupSpec(tmdb=out["tmdb_id"], title=title, year=year, refresh=refresh)
@@ -3262,7 +3551,7 @@ HDF_VERSIONS = [  # (motif dans le nom, après l'année ; valeur de la case « V
 
 def tmdb_original_language(tmdb_id, tv: bool = False) -> str:
     """Langue originale du film (ou de la série) sur TMDB (« fr », « en »…), vide si inconnue."""
-    if not tmdb_id or not os.environ.get("TMDB_API_KEY", "").strip():
+    if not tmdb_id or not tmdb_key():
         return ""
     try:
         return tmdb_get(f"/{'tv' if tv else 'movie'}/{int(tmdb_id)}", {}).get("original_language") or ""
