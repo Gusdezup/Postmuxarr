@@ -24,6 +24,26 @@ Les traitements longs sont des jobs côté serveur : le navigateur peut être fe
 > **Sécurité** : sans la protection par mot de passe (voir Accès), toute personne de ton réseau peut ouvrir
 > Postmuxarr. Ne l'expose pas sur Internet, et jamais sans HTTPS : en HTTP, le mot de passe circule en clair.
 
+## Prérequis
+
+- **Docker** avec Docker Compose, sur une machine **x86_64 (amd64)** : NAS Synology à processeur Intel ou AMD
+  (Container Manager), Unraid, serveur Linux… Les machines ARM (Raspberry Pi, NAS ARM) ne sont pas prises en charge
+  pour l'instant (binaire BDInfo amd64).
+- **qBittorrent 5.0 ou plus**, WebUI activée et joignable depuis le conteneur (création de torrents par son API).
+  Clé API possible à partir de la 5.2, sinon identifiant et mot de passe.
+- **Mêmes fichiers vus par Postmuxarr et par qBittorrent** : les dossiers de médias montés dans le conteneur, avec
+  la correspondance des chemins à régler dans Réglages. Pour le Repost, le dossier des hardlinks doit être sur le même
+  volume que les releases.
+- **Clé API HD-Forever** (HDF ▸ Intégrations ▸ API) : vérification des doublons, cross-seed, userscript de
+  disponibilité. Facultative, mais sans elle aucune vérification sur HDF.
+- **Clé TMDB** (gratuite, themoviedb.org ▸ Paramètres ▸ API) : identification des films et séries, langue
+  originale. Facultative, recommandée.
+- **Remux** (facultatif, le Repost s'en passe) : Blu-ray déjà déchiffrés (dossier BDMV ou ISO, par exemple sauvegardés
+  avec MakeMKV) ; mkvmerge ne lit pas un disque protégé par AACS. Prévoir l'espace libre du remux, plus la taille de
+  l'ISO pour une extraction temporaire.
+- **Userscripts** (facultatifs) : Violentmonkey ou Tampermonkey (voir Userscripts ▸ Compatibilité).
+- **Réseau local** : Postmuxarr n'est pas fait pour être exposé sur Internet.
+
 ## Installation
 
 1. Copier ce dossier dans le dossier du stack (par exemple `stack/postmuxarr`).
