@@ -272,9 +272,11 @@ input[type=password]{background:var(--ink);border:1px solid var(--line);border-r
 
 <main id="v-settings" hidden>
   <section class="step">
-    <h2>Connexions <span class="sub">qBittorrent, TMDB, HD-Forever, inventaire du Repost</span></h2>
+    <h2>Connexions et accès <span class="sub">qBittorrent, TMDB, HD-Forever, inventaire du Repost, mot de passe, userscripts</span></h2>
     <div class="box" id="conn"><p class="muted">Chargement…</p></div>
-    <div class="box" id="svc" style="margin-bottom:0"></div>
+    <div class="box" id="svc"></div>
+    <div class="box" id="acc"></div>
+    <div class="box" id="usc" style="margin-bottom:0"></div>
   </section>
   <section class="step">
     <h2>Remux et règles d'upload HDF <span class="sub">valeurs par défaut : règles d'octobre 2026</span></h2>
@@ -1533,8 +1535,70 @@ $('#svc').addEventListener('click', async e => {
     svcApplied(); renderSvc(t.dataset.svclear ? 'Effacé.' : 'Enregistré.', '');
   } catch (err) { t.disabled = false; st.className = 'error'; st.textContent = err.message; }
 });
+/* accès à Postmuxarr (authentification facultative) */
+const AC = {d: null};
+async function loadAcc() {
+  try { AC.d = await api('/api/auth'); renderAcc(); } catch (e) { $('#acc').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+function renderAcc(msg, cls) {
+  const d = AC.d;
+  $('#acc').innerHTML = `<h3>Accès à Postmuxarr</h3>
+    <p class="note" style="margin:0 0 .8rem">${d.enabled ? 'Protégé : identifiant et mot de passe demandés par le navigateur, une fois par session.'
+      : 'Non protégé : toute personne de ton réseau peut ouvrir Postmuxarr. Facultatif tant que l\'app reste sur ton réseau local.'}${d.forced_off ? ' <b>Protection suspendue par POSTMUXARR_NO_AUTH.</b>' : ''}</p>
+    <div class="set-f">
+      <label><span class="lab">Identifiant</span><input type="text" id="ac-user" value="${esc(d.user || '')}" autocomplete="username"></label>
+      <label><span class="lab">Mot de passe</span><input type="password" id="ac-pass" autocomplete="new-password" placeholder="${d.enabled ? 'vide = inchangé' : '8 caractères minimum'}"></label>
+      <label><span class="lab">Confirmation</span><input type="password" id="ac-pass2" autocomplete="new-password"></label>
+      ${d.enabled ? `<div class="set-sub">Clé API des userscripts (en-tête X-Api-Key)</div>
+      <label class="span2"><span class="lab">Clé API</span><input type="text" id="ac-key" value="${esc(d.api_key)}" readonly></label>
+      <div class="row"><button class="btn small" id="ac-copy">Copier</button><button class="btn small" id="ac-regen">Nouvelle clé</button></div>` : ''}
+    </div>
+    <div class="row set-act"><button class="btn primary" id="ac-save">${d.enabled ? 'Enregistrer' : 'Activer la protection'}</button>
+      ${d.enabled ? '<button class="btn" id="ac-off">Désactiver</button>' : ''}
+      <span class="${cls || 'muted'}" id="ac-st">${esc(msg || '')}</span></div>`;
+}
+$('#acc').addEventListener('click', async e => {
+  const t = e.target, st = () => $('#ac-st');
+  if (t.id === 'ac-copy') {
+    try { await navigator.clipboard.writeText($('#ac-key').value); toast('Clé copiée.'); } catch { $('#ac-key').select(); }
+    return;
+  }
+  if (!['ac-save', 'ac-off', 'ac-regen'].includes(t.id)) return;
+  try {
+    if (t.id === 'ac-save') {
+      const user = $('#ac-user').value.trim(), p1 = $('#ac-pass').value, p2 = $('#ac-pass2').value;
+      if (p1 !== p2) { st().className = 'error'; st().textContent = 'Les deux mots de passe diffèrent.'; return; }
+      if (!AC.d.enabled && !confirm('Activer la protection ? Le navigateur va te demander cet identifiant et ce mot de passe.')) return;
+      AC.d = await api('/api/auth', {method: 'PUT', body: JSON.stringify({user, password: p1})});
+      renderAcc('Enregistré. Saisis l\'identifiant et le mot de passe quand le navigateur les demande.', '');
+    } else if (t.id === 'ac-off') {
+      if (!confirm('Désactiver la protection ? Postmuxarr sera accessible sans mot de passe sur ton réseau.')) return;
+      AC.d = await api('/api/auth', {method: 'DELETE'});
+      renderAcc('Protection désactivée.', '');
+    } else {
+      if (!confirm('Générer une nouvelle clé API ? Les userscripts devront utiliser la nouvelle.')) return;
+      AC.d = await api('/api/auth/apikey', {method: 'POST'});
+      renderAcc('Nouvelle clé : réinstalle tes userscripts (bloc ci-dessous).', '');
+    }
+    loadUsc();  // les liens d'installation portent la clé API
+  } catch (err) { st().className = 'error'; st().textContent = err.message; }
+});
+/* userscripts servis par Postmuxarr (adresse et clé API déjà remplies) */
+async function loadUsc() {
+  try {
+    const list = await api('/api/userscripts');
+    $('#usc').innerHTML = `<h3>Userscripts</h3>
+      <p class="note" style="margin:0 0 .6rem">À installer dans Violentmonkey ou Tampermonkey : « Installer » ouvre la page d'installation.
+        L'adresse de Postmuxarr (celle de cette page) et la clé API sont déjà remplies, et les mises à jour viennent de Postmuxarr.
+        Réinstalle-les si l'adresse ou la clé API change.</p>
+      ${list.length ? `<table><tbody>${list.map(u => `<tr><td><b>${esc(u.name)}</b> <span class="muted">v${esc(u.version)}</span>
+          <small class="muted" style="display:block">${esc(u.description)}</small></td>
+        <td class="num"><a class="btn small" href="${esc(u.url)}">Installer</a></td></tr>`).join('')}</tbody></table>`
+        : '<p class="muted">Aucun userscript fourni.</p>'}`;
+  } catch (e) { $('#usc').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
 async function loadSettings() {
-  loadConn(); loadSvc();
+  loadConn(); loadSvc(); loadAcc(); loadUsc();
   try { applySettings(await api('/api/rules')); } catch (e) { $('#settings').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
 }
 function settingInput(e) { const p = e.target.dataset.p; if (!p) return; setP(ST.rules, p, readVal(e.target)); ST.dirty = true; renderSetBar(); }

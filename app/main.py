@@ -12,12 +12,14 @@ le navigateur peut être fermé, le travail continue.
 import base64
 import collections
 import hashlib
+import hmac
 import html
 import http.cookiejar
 import json
 import os
 import posixpath
 import re
+import secrets
 import shlex
 import shutil
 import sqlite3
@@ -34,8 +36,8 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import yaml
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -775,6 +777,157 @@ def repost_cfg() -> dict:
             "team": hdf_rules()["exempt_team"],
             # userscripts des autres trackers : durée du cache des recherches HDF par film
             "lookup_ttl": int(r.get("lookup_ttl", 6 * 3600))}
+
+
+# =========================================================================== accès (authentification facultative)
+
+AUTH_OFF = os.environ.get("POSTMUXARR_NO_AUTH", "").strip().lower() in ("1", "true", "yes", "on")  # secours
+_AUTH = {"at": 0.0, "v": None, "ok": set()}
+
+
+def auth_cfg() -> dict:
+    try:
+        rows = db_rows("SELECT value FROM settings WHERE key='auth'")
+    except Exception:
+        return {}
+    return json.loads(rows[0]["value"]) if rows else {}
+
+
+def auth_state() -> dict:
+    if _AUTH["v"] is None or time.time() - _AUTH["at"] > 5:
+        _AUTH.update(v=auth_cfg(), at=time.time())
+    return _AUTH["v"]
+
+
+def auth_reset():
+    _AUTH.update(v=None, ok=set())
+
+
+def pw_hash(pw: str, salt: str = "") -> tuple:
+    salt = salt or secrets.token_hex(16)
+    return salt, hashlib.pbkdf2_hmac("sha256", pw.encode(), bytes.fromhex(salt), 200_000).hex()
+
+
+def same(a: str, b: str) -> bool:
+    return hmac.compare_digest((a or "").encode(), (b or "").encode())
+
+
+@app.middleware("http")
+async def require_auth(request, call_next):
+    """Identifiant + mot de passe (HTTP Basic) ou clé API (en-tête X-Api-Key, userscripts), si la protection est
+    activée dans Réglages. Identifiants déjà vérifiés gardés en mémoire : le hachage n'est fait qu'une fois."""
+    a = auth_state()
+    if AUTH_OFF or not (a.get("user") and a.get("hash")):
+        return await call_next(request)
+    key = request.headers.get("x-api-key", "") or (
+        request.query_params.get("key", "") if request.url.path.startswith("/userscripts/") else "")
+    if key and a.get("api_key") and same(key, a["api_key"]):
+        return await call_next(request)
+    h = request.headers.get("authorization", "")
+    tag = hashlib.sha256(h.encode()).hexdigest()
+    if h and tag in _AUTH["ok"]:
+        return await call_next(request)
+    if h[:6].lower() == "basic ":
+        try:
+            u, _, p = base64.b64decode(h[6:]).decode("utf-8").partition(":")
+        except Exception:
+            u = p = ""
+        if u and same(u, a["user"]) and same(pw_hash(p, a["salt"])[1], a["hash"]):
+            _AUTH["ok"].add(tag)
+            return await call_next(request)
+    return Response("Authentification requise", status_code=401,
+                    headers={"WWW-Authenticate": 'Basic realm="Postmuxarr", charset="UTF-8"'})
+
+
+def auth_payload() -> dict:
+    a = auth_cfg()
+    on = bool(a.get("user") and a.get("hash"))
+    return {"enabled": on, "user": a.get("user", ""), "api_key": a.get("api_key", "") if on else "", "forced_off": AUTH_OFF}
+
+
+class AuthSpec(BaseModel):
+    user: str = ""
+    password: str = ""            # vide = inchangé (si déjà défini)
+
+
+@app.get("/api/auth")
+def api_auth_get():
+    return auth_payload()
+
+
+@app.put("/api/auth")
+def api_auth_put(spec: AuthSpec):
+    a, user = auth_cfg(), spec.user.strip()
+    if not user or ":" in user or len(user) > 60:
+        raise HTTPException(400, "Identifiant invalide (sans « : », 60 caractères au plus)")
+    if spec.password:
+        if len(spec.password) < 8:
+            raise HTTPException(400, "Mot de passe trop court : 8 caractères minimum")
+        salt, h = pw_hash(spec.password)
+    elif a.get("hash"):
+        salt, h = a["salt"], a["hash"]
+    else:
+        raise HTTPException(400, "Mot de passe requis pour activer la protection")
+    new = {"user": user, "salt": salt, "hash": h, "api_key": a.get("api_key") or secrets.token_urlsafe(24)}
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('auth', ?)", (json.dumps(new),))
+    auth_reset()
+    return auth_payload()
+
+
+@app.post("/api/auth/apikey")
+def api_auth_apikey():
+    a = auth_cfg()
+    if not a.get("hash"):
+        raise HTTPException(409, "Protection désactivée : pas de clé API")
+    a["api_key"] = secrets.token_urlsafe(24)
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('auth', ?)", (json.dumps(a),))
+    auth_reset()
+    return auth_payload()
+
+
+@app.delete("/api/auth")
+def api_auth_delete():
+    db_exec("DELETE FROM settings WHERE key='auth'")
+    auth_reset()
+    return auth_payload()
+
+
+# =========================================================================== userscripts (servis avec adresse et clé)
+
+USERSCRIPTS = APP_DIR / "userscripts"
+
+
+def userscript_meta(f: Path) -> dict:
+    head = f.read_text(encoding="utf-8").split("// ==/UserScript==")[0]
+    get = lambda k: (re.search(rf"^//\s*@{k}\s+(.+)$", head, re.M) or [None, ""])[1].strip()  # noqa: E731
+    return {"file": f.name, "name": get("name"), "description": get("description"), "version": get("version")}
+
+
+def userscript_key() -> str:
+    a = auth_cfg()
+    return a.get("api_key", "") if a.get("hash") else ""
+
+
+@app.get("/api/userscripts")
+def api_userscripts():
+    key = userscript_key()
+    q = "?key=" + urllib.parse.quote(key) if key else ""
+    return [{**userscript_meta(f), "url": f"/userscripts/{f.name}{q}"} for f in sorted(USERSCRIPTS.glob("*.user.js"))]
+
+
+@app.get("/userscripts/{name}")
+def userscript(name: str, request: Request):
+    """Userscript prêt à installer : adresse de Postmuxarr (celle du navigateur) et clé API remplies. Accessible avec la
+    clé en paramètre (?key=…) quand la protection est active : Violentmonkey s'en sert pour les mises à jour."""
+    f = USERSCRIPTS / name
+    if not re.fullmatch(r"[\w.-]+\.user\.js", name) or not f.is_file():
+        raise HTTPException(404, "Userscript introuvable")
+    base, key = str(request.base_url).rstrip("/"), userscript_key()
+    q = "?key=" + urllib.parse.quote(key) if key else ""
+    js = (f.read_text(encoding="utf-8").replace("__POSTMUXARR_URL__", base)
+          .replace("__POSTMUXARR_HOST__", request.url.hostname or "localhost").replace("__API_KEY__", key)
+          .replace("__SELF_URL__", f"{base}/userscripts/{name}{q}"))
+    return PlainTextResponse(js, media_type="text/javascript; charset=utf-8")
 
 
 @app.get("/api/config")
