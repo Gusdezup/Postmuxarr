@@ -228,6 +228,204 @@ REL_KINDS = {"original": "Blu-ray Original", "remux": "Blu-ray Remux", "rip": "B
 STRICT_KINDS = ("original", "remux")  # doublon bloquant (sauf team d'exception) ; les autres : alerte, arbitrage manuel
 
 
+# ------------------------------------------------------------------ règles d'upload HD-Forever (nom et structure)
+HDF_EXEMPT_TEAM = "HDForever"             # dérogation au doublon : reposts de la team interne HDForever seulement
+MHD_TEAMS = ("XSHD", "Psaro", "RiFiFi")   # seules teams autorisées en mHD (règles d'upload 4.5)
+HDF_BANNED = [  # (motif cherché après l'année, raison) — règles d'upload 3 et 5
+    (r"DVD(?:Rip|R|5|9|SCR)?|DVD-?REMUX|NTSC|PAL", "DVD : interdit (HD seulement)"),
+    (r"(?:HD)?CAM|(?:HD)?TS|TELESYNC|TC|TELECINE|SCR|SCREENER|R5", "CAM, TS, TC, Screener, R5 : interdits"),
+    (r"TVRip|HDTV(?:Rip)?|PDTV|SDTV", "TVRip, HDTV : interdits"),
+    (r"WEB-?Rip", "WEBRip : interdit"),
+    (r"Upscaled?|AI\.?Upscaled?", "vidéo upscalée : interdite"),
+    (r"MP3|WMA", "audio MP3 ou WMA : interdit"),
+]
+SEASON_EP = re.compile(r"(?<![A-Za-z0-9])S(\d{1,2})E(\d{1,3})(?![0-9])", re.I)
+
+# ------------------------------------------------------------------ critères modifiables (onglet Réglages)
+# Valeurs par défaut : règles d'upload HDF d'octobre 2026. Seules les différences sont enregistrées (settings.hdf_rules).
+RULES_DEFAULT = {
+    "release_tag": "",                       # vide = group de config.yml (stocké à part : settings.release_tag)
+    "exempt_team": "HDForever",              # règle 1.2 : reposts tolérés malgré un doublon (défaut : repost.team)
+    "size_tolerance": 0.10,                  # doublon remux/FULL : taille à ± 10 % (défaut : repost.size_tolerance)
+    "banned": [
+        {"terms": ["DVD", "DVDRip", "DVDR", "DVD-R", "DVD5", "DVD9", "DVDSCR", "DVD-REMUX", "DVDREMUX", "NTSC", "PAL"],
+         "reason": "DVD : interdit (HD seulement)"},
+        {"terms": ["CAM", "HDCAM", "TS", "HDTS", "TELESYNC", "TC", "TELECINE", "SCR", "SCREENER", "R5"],
+         "reason": "CAM, TS, TC, Screener, R5 : interdits"},
+        {"terms": ["TVRip", "HDTV", "HDTVRip", "PDTV", "SDTV"], "reason": "TVRip, HDTV : interdits"},
+        {"terms": ["WEBRip", "WEB-Rip"], "reason": "WEBRip : interdit"},
+        {"terms": ["Upscale", "Upscaled", "AI.Upscale", "AI.Upscaled"], "reason": "vidéo upscalée : interdite"},
+        {"terms": ["MP3", "WMA"], "reason": "audio MP3 ou WMA : interdit"},
+    ],
+    "refuse_720p": True,                     # règle 4.4 (encodes) et 3 (WEB-DL)
+    "mhd_teams": ["XSHD", "Psaro", "RiFiFi"],  # règle 4.5
+    # « résolution codec » : [débit min kbps, CRF max, débit min animation, CRF max animation] — règles 4.3, 4.6
+    "enc": {"1080p x264": [8000, 19, 7000, 21], "1080p x265": [4500, 20, 4500, 22], "1080p AV1": [4000, 24, 4000, 24],
+            "2160p x265": [18000, 18, 8000, 20], "2160p AV1": [12000, 22, 12000, 22]},
+    "mhd": {"x264": [3000, 23, 3000, 24], "x265": [3000, 22, 3000, 23]},  # mHD 1080p, règle 4.5
+    "web": {"1080p AVC": [3500, 2500], "1080p HEVC": [2500, 2500], "1080p AV1": [1800, 1800],
+            "2160p HEVC": [11000, 8000], "2160p AV1": [8000, 8000]},     # WEB-DL : [min, min animation], règle 5
+    "web_audio": {"AAC": 128, "AC3": 192, "EAC3": 192},                   # WEB-DL : débit audio minimum
+    "transcode": {"5.1": 640, "7.1 EAC3": 768, "par canal": 96},           # encodes : AC3/EAC3 transcodé, règle 4.3
+    "x264": {"subme": 7, "me_range": 16, "bframes": 6, "ref": 4, "level": 4.1},  # règles 1.3 et 4.3
+    "ten_bits": ["x265", "AV1"],
+    "audio_formats": ["TrueHD", "DTS-HD", "DTS", "EAC3", "AC3", "PCM", "FLAC", "AAC"],
+    "aac_only_web": True,                    # AAC : WEB-DL, commentaires et audiodescriptions seulement
+    "chapters": True,                        # chapitres obligatoires, sauf WEB-DL
+    "extra_langs": ["en"],                   # langues audio admises sans alerte en plus de la VF et de la VO
+}
+_RULES = {"at": 0.0, "v": None}
+
+
+def rules_base() -> dict:
+    """Valeurs par défaut, complétées par config.yml (repost.team, repost.size_tolerance)."""
+    rc = load_config().get("repost") or {}
+    base = json.loads(json.dumps(RULES_DEFAULT))
+    base["exempt_team"] = str(rc.get("team") or base["exempt_team"])
+    base["size_tolerance"] = float(rc.get("size_tolerance", base["size_tolerance"]))
+    return base
+
+
+def hdf_rules() -> dict:
+    """Critères en vigueur : valeurs par défaut + réglages enregistrés (cache de 5 s, vidé à chaque enregistrement)."""
+    if _RULES["v"] is not None and time.time() - _RULES["at"] < 5:
+        return _RULES["v"]
+    r = rules_base()
+    rows = db_rows("SELECT value FROM settings WHERE key='hdf_rules'")
+    for k, v in (json.loads(rows[0]["value"]) if rows else {}).items():
+        if k in r:
+            r[k] = {**r[k], **v} if isinstance(r[k], dict) and isinstance(v, dict) else v
+    tag = db_rows("SELECT value FROM settings WHERE key='release_tag'")
+    r["release_tag"] = tag[0]["value"] if tag else ""
+    _RULES.update(at=time.time(), v=r)
+    return r
+
+
+def clean_hdf_rules(d: dict, base: dict) -> dict:
+    """Réglages reçus de la page, typés comme les valeurs par défaut ; vide = valeur par défaut."""
+    def num(v, dflt):
+        if v is None or str(v).strip() == "":
+            return dflt
+        return float(str(v).replace(",", "."))
+    out = {}
+    for k, dv in base.items():
+        if k not in d or k == "release_tag":
+            continue
+        v = d[k]
+        try:
+            if isinstance(dv, bool):
+                out[k] = bool(v)
+            elif isinstance(dv, (int, float)):
+                out[k] = num(v, dv)
+            elif isinstance(dv, str):
+                out[k] = str(v or "").strip()[:60] or dv
+            elif k == "banned":
+                out[k] = [{"terms": [str(t).strip()[:40] for t in r.get("terms") or [] if str(t).strip()][:40],
+                           "reason": str(r.get("reason") or "").strip()[:200]} for r in v if isinstance(r, dict)][:40]
+                out[k] = [r for r in out[k] if r["terms"]]
+            elif isinstance(dv, list):
+                out[k] = [str(x).strip()[:40] for x in v if str(x).strip()][:40]
+            elif isinstance(dv, dict):
+                out[k] = {kk: ([num(x, dv[kk][i]) for i, x in enumerate(v[kk][:len(dv[kk])])] if isinstance(dv[kk], list)
+                               else num(v[kk], dv[kk])) for kk in dv if kk in v}
+        except (TypeError, ValueError, AttributeError, KeyError):
+            raise HTTPException(400, f"Valeur illisible dans les réglages : {k}")
+    return {k: v for k, v in out.items() if v != base[k]}
+
+
+def season_of(name: str):
+    """Numéro de saison d'un nom (S01, S01E02, Saison 1…), None sinon."""
+    m = token(r"S(\d{1,2})(?:E\d{1,3})?|Saison\.?(\d{1,2})|Season\.?(\d{1,2})", name or "")
+    return int(next(g for g in m.groups() if g)) if m else None
+
+
+def series_title(name: str):
+    """(titre, année) d'un nom de série : ce qui précède la saison (« The.Office.US.S02.1080p… » → « The Office US »)."""
+    m = re.search(r"^(.*?)[.\s_-]+(?:S\d{1,2}(?:E\d{1,3})?|Saison\.?\d+|Season\.?\d+)(?![A-Za-z0-9])", name or "", re.I)
+    return guess_title(m.group(1) if m else name or "")
+
+
+def files_shape(names: list, sizes: list) -> str:
+    """Forme d'un torrent d'après ses fichiers (règle HDF 1.5 : un film, une saison complète, ou un disque) :
+    mkv = un seul gros MKV, hors épisode ; season = plusieurs épisodes MKV d'une même saison ; episode = épisode seul ;
+    pack = plusieurs saisons ; disc = dossier BDMV ou ISO ; other = le reste (plusieurs films, archives, AVI…)."""
+    names = [(n or "").replace("\\", "/") for n in names]
+    if any("BDMV/" in "/" + n for n in names):
+        return "disc"
+    big = [n for n, s in zip(names, sizes) if (s or 0) >= BIG_FILE]
+    if len(big) == 1 and big[0].lower().endswith(".iso"):
+        return "disc"
+    if not big or not all(n.lower().endswith(".mkv") for n in big):
+        return "other"
+    eps = [SEASON_EP.search(posixpath.basename(n)) for n in big]
+    if len(big) == 1:
+        return "episode" if eps[0] else "mkv"
+    if not all(eps):
+        return "other"
+    return "season" if len({int(m.group(1)) for m in eps}) == 1 else "pack"
+
+
+def hdf_eligibility(name: str, shape: str, kind: str):
+    """Repost possible sur HDF d'après le nom et la structure (règles d'upload 1.5, 3, 4.4, 4.5, 5 ; critères de
+    l'onglet Réglages) : (« ok » | « check » | « refused », raisons). Ni les doublons ni le fichier ne sont vérifiés ici."""
+    R = hdf_rules()
+    bad, check = [], []
+    if shape == "episode":
+        bad.append("épisode seul : saison complète obligatoire")
+    elif shape == "pack":
+        bad.append("plusieurs saisons : un torrent par saison")
+    elif shape == "other":
+        bad.append("contenu non admis : film ou saison en MKV, ou disque BDMV/ISO")
+    elif not shape:
+        check.append("contenu inconnu (torrent absent de qBittorrent)")
+    m = re.search(r"[.\s(\[_-](?:19|20)\d{2}[.\s)\]_-]+(.+)$", name or "")
+    tail = m.group(1) if m else name or ""
+    for row in R["banned"]:
+        terms = [t for t in row.get("terms") or [] if t]
+        if terms and token("|".join(re.escape(t) for t in terms), tail):
+            bad.append(row.get("reason") or "terme interdit : " + ", ".join(terms))
+    res = rel_res(name or "")
+    if not res:
+        check.append("résolution absente du nom" + (" : à lire dans le BDInfo" if shape == "disc" else " (SD interdit)"))
+    elif res == "720p" and kind != "original" and R["refuse_720p"]:
+        bad.append("720p interdit, sauf exception du staff si aucune source 1080p n'existe")
+    if kind == "mhd":
+        team = name.rsplit("-", 1)[1].strip() if "-" in name else ""
+        if team.lower() not in {t.lower() for t in R["mhd_teams"]}:
+            bad.append(f"mHD : seules les teams {', '.join(R['mhd_teams'])} sont autorisées")
+    elif not kind:
+        check.append("catégorie HDF indéterminée d'après le nom")
+    bad = list(dict.fromkeys(bad))
+    return ("refused" if bad else "check" if check else "ok"), bad + check
+
+
+def link_target(ref: Path) -> Path:
+    """Dossier des hardlinks des reposts (repost.link_dir) : sous un dossier de qBittorrent, même volume que ref."""
+    link_dir = repost_cfg()["link_dir"]
+    if not any(within(link_dir, r) for r in media_roots()):
+        raise HTTPException(400, f"repost.link_dir ({link_dir}) doit être sous un dossier de qbittorrent.path_map")
+    try:
+        link_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        raise HTTPException(500, f"Impossible de créer {link_dir} ({e.strerror}) : "
+                                 f"sudo mkdir -p {link_dir} && sudo chown 1026:100 {link_dir}")
+    if os.stat(link_dir).st_dev != os.stat(ref).st_dev:
+        raise HTTPException(400, f"{link_dir} n'est pas sur le même volume que la release : hardlink impossible")
+    return link_dir
+
+
+def season_dir(p: Path) -> bool:
+    """Dossier de saison (épisodes MKV), par opposition à un disque Blu-ray en dossier."""
+    try:
+        return p.is_dir() and not has_disc(p) and any(x.suffix.lower() == ".mkv" for x in p.iterdir())
+    except OSError:
+        return False
+
+
+def first_episode(p: Path) -> Path:
+    return sorted(x for x in p.iterdir() if x.suffix.lower() == ".mkv")[0]
+
+
 def rel_kind(name: str, disc: bool = False) -> str:
     """Catégorie d'une release d'après son nom (et sa forme : dossier BDMV ou ISO = disque complet).
     « webrip » = refusé par HDF ; « » = indéterminée (à choisir à la main), DVD compris (HDF : HD seulement)."""
@@ -523,9 +721,9 @@ def repost_cfg() -> dict:
             # hardlinks au nom nettoyé : le fichier de l'autre seed garde son nom
             "link_dir": Path(r.get("link_dir") or "/volume1/media/repost"),
             # doublon HDF : remux de même résolution et mêmes langues, taille à ± size_tolerance près
-            "size_tolerance": float(r.get("size_tolerance", 0.10)),
-            # team dont les releases restent postables malgré un doublon (défaut : group de config.yml)
-            "team": str(r.get("team") or load_config().get("group") or ""),
+            "size_tolerance": hdf_rules()["size_tolerance"],
+            # dérogation HDF au doublon : reposts de la team interne HDForever seulement, pas le tag de tes remux
+            "team": hdf_rules()["exempt_team"],
             # userscripts des autres trackers : durée du cache des recherches HDF par film
             "lookup_ttl": int(r.get("lookup_ttl", 6 * 3600))}
 
@@ -533,6 +731,9 @@ def repost_cfg() -> dict:
 @app.get("/api/config")
 def api_config():
     cfg = load_config()
+    tag = db_rows("SELECT value FROM settings WHERE key='release_tag'")
+    if tag:
+        cfg["group"] = tag[0]["value"]  # tag choisi dans l'interface, prioritaire sur config.yml
     hdf_host = urllib.parse.urlparse(hdf_tracker(cfg).get("announce") or "").hostname or ""
     q = cfg.get("qbittorrent") or {}
     cfg["qbittorrent"] = {"url": q.get("url"), "configured": bool(q.get("url"))}  # jamais le mot de passe
@@ -563,6 +764,54 @@ def has_disc(d: Path, depth: int = 2) -> bool:
     except OSError:
         return False
     return False
+
+
+class TagSpec(BaseModel):
+    tag: str
+
+
+@app.post("/api/settings/tag")
+def api_settings_tag(spec: TagSpec):
+    """Tag des remux choisi dans l'interface, prioritaire sur group de config.yml."""
+    tag = release_safe(spec.tag.strip())
+    if not tag or len(tag) > 40:
+        raise HTTPException(400, "Tag invalide")
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('release_tag', ?)", (tag,))
+    _RULES["v"] = None
+    return {"tag": tag}
+
+
+def rules_payload() -> dict:
+    base = rules_base()
+    return {"rules": hdf_rules(), "defaults": {**base, "release_tag": ""}, "config_group": load_config().get("group") or ""}
+
+
+@app.get("/api/rules")
+def api_rules_get():
+    return rules_payload()
+
+
+@app.put("/api/rules")
+def api_rules_put(d: dict):
+    """Enregistre les critères (seulement ce qui diffère des valeurs par défaut) et le tag des remux."""
+    db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('hdf_rules', ?)",
+            (json.dumps(clean_hdf_rules(d, rules_base())),))
+    if "release_tag" in d:
+        tag = release_safe(str(d.get("release_tag") or "").strip())[:40]
+        if tag:
+            db_exec("INSERT OR REPLACE INTO settings (key, value) VALUES ('release_tag', ?)", (tag,))
+        else:
+            db_exec("DELETE FROM settings WHERE key='release_tag'")
+    _RULES["v"] = None
+    return rules_payload()
+
+
+@app.post("/api/rules/reset")
+def api_rules_reset():
+    """Critères par défaut (le tag des remux est conservé)."""
+    db_exec("DELETE FROM settings WHERE key='hdf_rules'")
+    _RULES["v"] = None
+    return rules_payload()
 
 
 @app.get("/api/browse")
@@ -851,15 +1100,16 @@ def tmdb_get(path: str, params: dict) -> dict:
         raise HTTPException(502, f"TMDB injoignable : {e.reason}")
 
 
-def tmdb_query(q: str, year: str = "") -> list:
+def tmdb_query(q: str, year: str = "", tv: bool = False) -> list:
+    path, ykey = ("/search/tv", "first_air_date_year") if tv else ("/search/movie", "year")
     base = {"query": q.strip(), "language": "fr-FR", "include_adult": "false"}
-    res = tmdb_get("/search/movie", {**base, "year": year}).get("results", []) if year else []
+    res = tmdb_get(path, {**base, ykey: year}).get("results", []) if year else []
     if not res:  # année absente ou fausse dans la source : on réessaie sans
-        res = tmdb_get("/search/movie", base).get("results", [])
+        res = tmdb_get(path, base).get("results", [])
     return res
 
 
-def tmdb_find(q: str, year: str = "") -> tuple:
+def tmdb_find(q: str, year: str = "", tv: bool = False) -> tuple:
     """Recherche TMDB ; si rien, on raccourcit le titre par la fin (nom tronqué : « JE SAIS RIEN MAIS »).
     Renvoie (résultats, requête qui a répondu)."""
     words = q.split()
@@ -867,7 +1117,7 @@ def tmdb_find(q: str, year: str = "") -> tuple:
         part = " ".join(words[:n])
         if n < len(words) and (n < 2 and len(part) < 6):  # un mot court seul : trop vague
             break
-        res = tmdb_query(part, year)
+        res = tmdb_query(part, year, tv)
         if res:
             return res, part
     return [], q
@@ -917,11 +1167,13 @@ def tmdb_rank(res: list, year: str = "", langs=(), complete: bool = False) -> li
     return [r for _, r in sorted(enumerate(res), key=score)]
 
 
-def tmdb_format(res: list, n: int = 8) -> list:
+def tmdb_format(res: list, n: int = 8, tv: bool = False) -> list:
     return [{
-        "id": r["id"], "title": r.get("title") or "", "original_title": r.get("original_title") or "",
-        "original_language": r.get("original_language") or "", "year": (r.get("release_date") or "")[:4],
-        "url": f"https://www.themoviedb.org/movie/{r['id']}",
+        "id": r["id"], "title": r.get("title") or r.get("name") or "",
+        "original_title": r.get("original_title") or r.get("original_name") or "",
+        "original_language": r.get("original_language") or "",
+        "year": (r.get("release_date") or r.get("first_air_date") or "")[:4],
+        "url": f"https://www.themoviedb.org/{'tv' if tv else 'movie'}/{r['id']}",
         "poster": f"https://image.tmdb.org/t/p/w92{r['poster_path']}" if r.get("poster_path") else None,
     } for r in res[:n]]
 
@@ -1120,6 +1372,8 @@ def init_db():
     db_exec("CREATE TABLE IF NOT EXISTS repost_checks (hash TEXT PRIMARY KEY, status TEXT, result TEXT, at REAL)")
     db_exec("CREATE TABLE IF NOT EXISTS hdf_lookup (key TEXT PRIMARY KEY, result TEXT, at REAL)")
     db_exec("CREATE TABLE IF NOT EXISTS hdf_scan (path TEXT PRIMARY KEY, result TEXT, at REAL)")
+    db_exec("CREATE TABLE IF NOT EXISTS torrent_shape2 (hash TEXT PRIMARY KEY, shape TEXT)")  # v2 : saisons
+    db_exec("CREATE TABLE IF NOT EXISTS repost_mi (hash TEXT PRIMARY KEY, result TEXT, at REAL)")
     # jobs coupés par un redémarrage : on supprime ce qui est partiel
     for j in db_rows("SELECT id, kind, output FROM jobs WHERE status='running'"):
         if j["kind"] in ("remux", None) and j["output"]:
@@ -1395,29 +1649,48 @@ class Worker(threading.Thread):
 
     # ---------------------------------------------------------------- repost
     def do_repost(self, job):
-        """Release d'un autre seed : lecture seule. MediaInfo (BDInfo pour un disque), puis nouveau torrent sur les
-        mêmes données. Seuls nos remux passent par un hardlink renommé ; le reste garde son nom."""
+        """Release d'un autre seed : lecture seule. MediaInfo (BDInfo pour un disque, 1er épisode pour une saison), puis
+        nouveau torrent sur les mêmes données. Hardlinks seulement pour un remux renommé ou une saison à nettoyer."""
         spec = json.loads(job["spec"])
         src, out = Path(spec["mkv"]), Path(job["output"])
         kind = spec.get("rel_kind") or "remux"
         if not src.exists():
             self.say(f"Release introuvable dans le conteneur : {src}")
             return "failed", None
-        if out != src:  # nom à nettoyer : hardlink renommé, l'original n'est pas touché
-            self.phase("Hardlink au nom de la release")
-            if not out.exists():
-                out.parent.mkdir(parents=True, exist_ok=True)
-                os.link(src, out)
-                self.say(f"Hardlink créé : {out}")
-            elif not os.path.samefile(out, src):
-                self.say(f"{out} existe déjà et n'est pas ce fichier : abandon.")
-                return "failed", None
-        remember(out, "", spec.get("tmdb_id"))
-        if kind == "original":
-            if not self.store_bdinfo(out):
-                return "failed", None
+        if spec.get("season"):
+            files = [Path(p) for p in spec.get("episodes") or []]
+            if out != src:
+                self.phase("Hardlinks de la saison (épisodes et .nfo seulement)")
+                out.mkdir(parents=True, exist_ok=True)
+                for f in files:
+                    dst = out / f.name
+                    if not dst.exists():
+                        os.link(f, dst)
+                    elif not os.path.samefile(dst, f):
+                        self.say(f"{dst} existe déjà et n'est pas ce fichier : abandon.")
+                        return "failed", None
+                self.say(f"{len(files)} fichier(s) liés dans {out}" + (f" ({spec.get('extras')} autre(s) laissé(s) de côté)"
+                                                                      if spec.get("extras") else ""))
+            remember(out, "", spec.get("tmdb_id"))
+            eps = sorted(x for x in out.iterdir() if x.suffix.lower() == ".mkv")
+            if eps:
+                self.store_mediainfo(eps[0], "", header="REPOST")  # MediaInfo du 1er épisode
         else:
-            self.store_mediainfo(out, "", header="REPOST")  # en tête du MediaInfo, à la place de « Source : »
+            if out != src:  # nom à nettoyer : hardlink renommé, l'original n'est pas touché
+                self.phase("Hardlink au nom de la release")
+                if not out.exists():
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    os.link(src, out)
+                    self.say(f"Hardlink créé : {out}")
+                elif not os.path.samefile(out, src):
+                    self.say(f"{out} existe déjà et n'est pas ce fichier : abandon.")
+                    return "failed", None
+            remember(out, "", spec.get("tmdb_id"))
+            if kind == "original":
+                if not self.store_bdinfo(out):
+                    return "failed", None
+            else:
+                self.store_mediainfo(out, "", header="REPOST")  # en tête du MediaInfo, à la place de « Source : »
         REPOST_TORRENTS.mkdir(parents=True, exist_ok=True)
         tfile = REPOST_TORRENTS / f"{rel_label(out)}.torrent"
         ok = self.make_torrent(out, TorrentSpec(**(spec.get("torrent") or {})), tfile=tfile,
@@ -1543,8 +1816,9 @@ class Worker(threading.Thread):
                 chk = check_row(src["hash"])
                 tmdb_id = (chk or {}).get("tmdb_id") or release_meta(Path(src["path"]))["tmdb_id"]
                 if not tmdb_id and src["kind"] in REL_KINDS:
-                    title, year = guess_title(src["stem"])
-                    tmdb_id = (tmdb_guess(title, year, name=src["stem"])[0] or {}).get("id")
+                    tv = src["season"] or is_series(src["stem"])
+                    title, year = (series_title if tv else guess_title)(src["stem"])
+                    tmdb_id = (tmdb_guess(title, year, name=src["stem"], tv=tv)[0] or {}).get("id")
                 st = repost_check(src, tmdb_id, quick=True, refresh=spec.get("refresh", False))["status"]
                 name = src["stem"]
             except HTTPException as e:
@@ -1951,6 +2225,50 @@ def nettoyarr(path: str, method: str = "GET"):
         raise HTTPException(502, f"Nettoyarr : réponse illisible sur {path} (format changé ?)")
 
 
+class ShapeCache:
+    """Forme du contenu de chaque torrent (files_shape), lue dans qBittorrent. Cache par hash : le contenu d'un
+    torrent ne change jamais."""
+
+    def __init__(self, q, allq: dict):
+        self.q, self.allq, self.new = q, allq, {}
+        self.known = {r["hash"]: r["shape"] for r in db_rows("SELECT hash, shape FROM torrent_shape2")}
+
+    def of(self, hashes: list) -> str:
+        hs = [h.lower() for h in hashes if h]
+        for h in hs:
+            if h in self.known:
+                return self.known[h]
+        for h in hs:
+            t = self.allq.get(h)
+            if not t or not self.q:
+                continue
+            try:
+                s = self.compute(h, t)
+            except Exception:
+                continue
+            self.known[h] = self.new[h] = s
+            return s
+        return ""  # absente de qBittorrent
+
+    def compute(self, h: str, t: dict) -> str:
+        cp = (t.get("content_path") or "").replace("\\", "/")
+        if cp.lower().endswith((".mkv", ".iso")):  # torrent à un seul fichier : pas besoin de la liste
+            return files_shape([posixpath.basename(cp)], [BIG_FILE])
+        files = self.q.json("torrents/files?hash=" + h) or []
+        return files_shape([f.get("name") or "" for f in files], [f.get("size") or 0 for f in files])
+
+    def save(self):
+        if not self.new:
+            return
+        with db_lock:
+            con = db()
+            try:
+                con.executemany("INSERT OR REPLACE INTO torrent_shape2 (hash, shape) VALUES (?,?)", list(self.new.items()))
+                con.commit()
+            finally:
+                con.close()
+
+
 @app.get("/api/repost/inventory")
 def api_repost_inventory():
     d = nettoyarr("/inventory")
@@ -1958,11 +2276,15 @@ def api_repost_inventory():
         d = d if isinstance(d, dict) else {}
         return {"state": d.get("state") or "error", "job_id": d.get("job_id"), "error": d.get("error")}
     # qBittorrent : seuls les torrents complets et dont les fichiers sont là sont repostables (1 appel pour tout)
+    q = None
     try:
-        allq = {t["hash"].lower(): t for t in qbt().json("torrents/info") or []}
+        q = qbt()
+        allq = {t["hash"].lower(): t for t in q.json("torrents/info") or []}
         ready = {h for h, t in allq.items() if (t.get("progress") or 0) >= 1 and t.get("state") != "missingFiles"}
     except Exception:
         allq, ready = {}, None  # qBittorrent injoignable : on n'écarte rien, l'erreur viendra à l'ouverture
+    shapes = ShapeCache(q, allq)
+    mis = {r["hash"]: json.loads(r["result"]) for r in db_rows("SELECT hash, result FROM repost_mi")}
     hidden = []
     rmasked = repost_masked()
     checks = {r["hash"]: r for r in db_rows("SELECT hash, status, at FROM repost_checks")}
@@ -1971,16 +2293,18 @@ def api_repost_inventory():
         jobs[r["source"]] = r  # le plus récent l'emporte
     rels = []
     for r in d.get("releases") or []:
-        if r.get("kind") == "episodes":  # séries exclues en V1
-            continue
         trs = [{"host": t.get("host") or "?", "hash": t.get("hash"), "name": t.get("name") or "", "seeds": t.get("seeds")}
                for t in r.get("trackers") or []]
         hashes = [t["hash"] for t in trs if t["hash"]] or list(r.get("hashes") or [])
         chk = next((checks[h] for h in hashes if h in checks), None)
         job = next((jobs[h] for h in hashes if h in jobs), None)
+        name = r.get("name") or ""
+        shape = shapes.of(hashes)
+        rk = rel_kind(name, shape == "disc")  # catégorie HDF supposée d'après le nom (corrigée dans le détail)
+        elig, why = merge_mi(*hdf_eligibility(name, shape, rk), mis, hashes)
         rel = {
-            "id": r.get("id"), "kind": r.get("kind"), "title": r.get("title") or "", "name": r.get("name") or "",
-            "rk": rel_kind(r.get("name") or ""),  # catégorie HDF supposée d'après le nom (corrigée dans le détail)
+            "id": r.get("id"), "kind": r.get("kind"), "title": r.get("title") or "", "name": name,
+            "rk": rk, "res": rel_res(name), "shape": shape, "elig": elig, "elig_why": why,
             "size": r.get("size") or 0, "category": r.get("category") or [], "trackers": trs, "hashes": hashes,
             "hdf": chk["status"] if chk else None, "hdf_at": chk["at"] if chk else None,
             "job": {"id": job["id"], "status": job["status"]} if job else None,
@@ -1996,6 +2320,7 @@ def api_repost_inventory():
             hidden.append(rel)
         else:
             rels.append(rel)
+    shapes.save()
     return {"state": "ready", "built_at": d.get("built_at"), "releases": rels,
             "tracker_names": d.get("tracker_names") or {}, "prowlarr_names": d.get("prowlarr_names") or {},
             # les avertissements Tautulli (visionnages) ne concernent pas le repost
@@ -2057,7 +2382,7 @@ def clean_rules(node, depth=0):
                 out["rules"].append(sub)
             continue
         v = r.get("v", "")
-        if not isinstance(v, (str, int, float)) or len(str(v)) > 200:
+        if not isinstance(v, (str, int, float)) or len(str(v)) > 500:
             v = ""
         out["rules"].append({"f": str(r.get("f", ""))[:30], "op": str(r.get("op", ""))[:30], "v": v})
     return out
@@ -2093,9 +2418,9 @@ class CrossSpec(BaseModel):
 
 
 def pick_source(q: Qbt, hashes: list, kind: str = "") -> dict:
-    """Le torrent de la release à reposter, complet : un seul gros fichier MKV (remux, WEB-DL, rip, mHD),
-    ou un disque complet (dossier contenant BDMV, ou un ISO) pour un Blu-ray Original.
-    kind : catégorie choisie à la main, sinon déduite du nom. Hors remux, rien n'est renommé."""
+    """Le torrent de la release à reposter, complet : un film en MKV (seul ou dans un dossier), une saison complète
+    (dossier d'épisodes MKV d'une même saison), ou un disque complet (dossier contenant BDMV, ou ISO) pour un Blu-ray
+    Original. kind : catégorie choisie à la main, sinon déduite du nom. Hors remux, rien n'est renommé."""
     hashes = [h for h in hashes if re.fullmatch(r"[0-9a-fA-F]{40}", h or "")]
     if not hashes:
         raise HTTPException(400, "Aucun hash de torrent valide")
@@ -2112,6 +2437,8 @@ def pick_source(q: Qbt, hashes: list, kind: str = "") -> dict:
         files = q.json("torrents/files?hash=" + t["hash"]) or []
         big = [f for f in files if (f.get("size") or 0) >= BIG_FILE]
         save = t.get("save_path") or ""
+        shape = files_shape([f.get("name") or "" for f in files], [f.get("size") or 0 for f in files])
+        season, episodes = False, []
         if any("BDMV/" in ("/" + f["name"]).replace("\\", "/") for f in files):
             tops = {f["name"].replace("\\", "/").split("/", 1)[0] for f in files}
             if len(tops) != 1 or all("/" not in f["name"] for f in files) or next(iter(tops)) == "BDMV":
@@ -2122,22 +2449,35 @@ def pick_source(q: Qbt, hashes: list, kind: str = "") -> dict:
         elif len(big) == 1 and big[0]["name"].lower().endswith(".iso"):
             name, size, disc, folder = posixpath.basename(big[0]["name"]), big[0]["size"], True, "/" in big[0]["name"]
             qpath = posixpath.join(save, big[0]["name"])
-        elif len(big) == 1 and big[0]["name"].lower().endswith(".mkv"):
+        elif shape == "mkv":
             name, size, disc, folder = posixpath.basename(big[0]["name"]), big[0]["size"], False, "/" in big[0]["name"]
             qpath = posixpath.join(save, big[0]["name"])
+        elif shape == "season":
+            names = [f["name"].replace("\\", "/") for f in big]
+            tops = {n.split("/", 1)[0] for n in names}
+            if len(tops) != 1 or any("/" not in n for n in names):
+                why.append(f"{t['name']} : saison sans dossier racine, impossible à reposter telle quelle")
+                continue
+            name = next(iter(tops))
+            qpath, size, disc, folder, season = posixpath.join(save, name), sum(f["size"] for f in big), False, True, True
+            episodes = sorted(q.unmap_path(posixpath.join(save, n)) for n in names)
         else:
-            why.append(f"{t['name']} : {len(big)} gros fichier(s) ; il faut un seul MKV, un ISO ou un dossier BDMV")
+            why.append({"episode": f"{t['name']} : épisode seul, HDF n'admet que des saisons complètes",
+                        "pack": f"{t['name']} : plusieurs saisons, HDF veut un torrent par saison"}.get(
+                shape, f"{t['name']} : {len(big)} gros fichier(s) ; il faut un film en MKV, une saison en MKV, "
+                       "un ISO ou un dossier BDMV"))
             continue
         host = q.unmap_path(qpath)
-        stem = name if disc and not name.lower().endswith(".iso") else Path(name).stem
+        whole = (disc or season) and not name.lower().endswith(".iso")  # dossier publié en entier
+        stem = name if whole else Path(name).stem
         detected = rel_kind(stem, disc)
         k = kind if kind in REL_KINDS and (kind == "original") == disc else detected
         return {"hash": t["hash"], "torrent": t.get("name") or "", "name": name, "stem": stem,
                 "clean": release_safe(stem) if k == "remux" else stem,  # seuls nos remux suivent la règle de nommage
                 "size": size, "qbt_path": qpath, "path": host, "folder": folder, "disc": disc,
-                "disc_dir": disc and not name.lower().endswith(".iso"),
-                "kind": k, "kind_detected": detected,
-                "exists": Path(host).is_dir() if disc and not name.lower().endswith(".iso") else Path(host).is_file()}
+                "disc_dir": disc and not name.lower().endswith(".iso"), "season": season, "episodes": episodes,
+                "shape": shape, "kind": k, "kind_detected": detected,
+                "exists": Path(host).is_dir() if whole else Path(host).is_file()}
     raise HTTPException(422, "Rien à reposter dans cette release : " + " ; ".join(why[:3]))
 
 
@@ -2148,17 +2488,17 @@ def check_row(h: str):
     return {**json.loads(rows[0]["result"]), "status": rows[0]["status"], "at": rows[0]["at"]}
 
 
-def tmdb_guess(title: str, year: str, langs=None, name: str = ""):
-    """Premier résultat TMDB s'il a la même année (choix net), plus la liste pour corriger à la main.
+def tmdb_guess(title: str, year: str, langs=None, name: str = "", tv: bool = False):
+    """Premier résultat TMDB (film, ou série si tv) après classement, plus la liste pour corriger à la main.
     partial = trouvé seulement sur un début du titre (nom tronqué) : à confirmer."""
     if not os.environ.get("TMDB_API_KEY", "").strip() or not title:
         return None, []
     try:
-        raw, used = tmdb_find(title, year)
+        raw, used = tmdb_find(title, year, tv)
     except HTTPException:
         return None, []
-    # année, langue originale présente dans les pistes audio (sinon devinée du nom), film français en cas de doute
-    res = tmdb_rank(tmdb_format(raw, 20), year, langs or name_langs(name or title), complete=bool(langs))[:8]
+    # année, langue originale présente dans les pistes audio (sinon devinée du nom), œuvre française en cas de doute
+    res = tmdb_rank(tmdb_format(raw, 20, tv), year, langs or name_langs(name or title), complete=bool(langs))[:8]
     pick = res[0] if res else None
     if pick and used != title:
         pick = {**pick, "partial": True, "query": used}
@@ -2173,14 +2513,18 @@ def api_repost_release(spec: RepostRef):
     if not spec.kind and check and check.get("kind") and check["kind"] != src["kind"]:
         src = pick_source(q, spec.hashes, check["kind"])  # catégorie corrigée à la main lors de la vérification
     stem = src["stem"]
-    title, year = guess_title(stem)
-    pick, results = tmdb_guess(title, year, name=stem)
+    series = src["season"] or is_series(stem)
+    title, year = series_title(stem) if series else guess_title(stem)
+    pick, results = tmdb_guess(title, year, name=stem, tv=series)
     known = release_meta(Path(src["path"]))["tmdb_id"]
     if check and check.get("kind", "remux") != src["kind"]:
         check = None  # vérifiée sous une autre catégorie : à refaire
     tmdb_id = (check or {}).get("tmdb_id") or known or (pick or {}).get("id")
     jobs = db_rows("SELECT id, status FROM jobs WHERE kind='repost' AND source=? ORDER BY id DESC LIMIT 1", (src["hash"],))
-    return {**src, "title": title, "year": year, "series": is_series(stem), "kinds": REL_KINDS,
+    elig, why = hdf_eligibility(src["name"], src["shape"] if not src["disc"] else "disc", src["kind"])
+    mi = db_rows("SELECT result FROM repost_mi WHERE hash=?", (src["hash"],))
+    return {**src, "mi": json.loads(mi[0]["result"]) if mi else None,
+            "title": title, "year": year, "series": series, "kinds": REL_KINDS, "elig": elig, "elig_why": why,
             "tmdb_id": tmdb_id, "tmdb_results": results, "check": check, "job": jobs[0] if jobs else None}
 
 
@@ -2283,10 +2627,13 @@ def classify(src: dict, found: list, approx: bool = False, new: bool = False) ->
     team = src["stem"].rsplit("-", 1)[1].strip() if "-" in src["stem"] else ""
     exempt = not new and bool(rc["team"]) and team.lower() == rc["team"].lower()  # l'exception ne vaut que pour un repost
     strict = kind in STRICT_KINDS
+    season = season_of(src["stem"]) if (src.get("season") or is_series(src["stem"])) else None
     items = []
     for t in found:
         size = t.get("size") or 0
         cat = bool(media) and (t.get("media") or "") == media and (not res or (t.get("encoding") or "").lower() == res)
+        if season is not None and season_of(t.get("fileName") or "") != season:
+            cat = False  # autre saison de la série : pas un doublon
         close = bool(size) and abs(size - src["size"]) <= rc["size_tolerance"] * max(size, src["size"])
         langs = same_langs(ours, lang_sig(t.get("fileName") or ""))
         same = size == src["size"] or (approx and bool(size) and abs(size - src["size"]) <= 0.003 * size)
@@ -2342,24 +2689,23 @@ def classify(src: dict, found: list, approx: bool = False, new: bool = False) ->
 
 def repost_check(src: dict, tmdb_id, quick: bool = False, refresh: bool = False) -> dict:
     """Vérification HDF d'une release (src de pick_source), enregistrée dans repost_checks.
-    Complète : tous les torrents du film (TMDB), puis le nom du fichier si aucun doublon exact n'a été vu (1-2 appels).
-    quick (vérification de masse) : le film seul, en cache 6 h partagé avec les userscripts ; le nom du fichier
-    seulement sans film TMDB."""
+    Complète : tous les torrents de l'œuvre (TMDB), puis le nom de la release si aucun doublon exact n'a été vu.
+    quick (vérification de masse) : l'œuvre seule (cache 6 h des films partagé avec les userscripts) ; le nom seulement
+    sans TMDB. Série : pas de filtre de catégorie HDF, et seule la même saison compte (classify)."""
     found = {}
+    series = src.get("season") or is_series(src["stem"])
     if src["kind"] in REL_KINDS:  # WEBRip (refusé) ou catégorie indéterminée : pas d'appel HDF
-        if quick:
-            if tmdb_id:
-                rows = hdf_film(LookupSpec(tmdb=tmdb_id, refresh=refresh))[0]
-            else:
-                rows = HdfApi().call("browse", searchstr=src["name"], group_results=0, limit=50).get("results") or []
-            found = {t.get("torrentId"): t for t in rows}
+        if quick and tmdb_id and not series:
+            found = {t.get("torrentId"): t for t in hdf_film(LookupSpec(tmdb=tmdb_id, refresh=refresh))[0]}
         else:
             api = HdfApi()
             if tmdb_id:
-                for t in api.call("browse", search_type="advanced", tmdbid=tmdb_id, filter_cat="1,2",
-                                  group_results=0, limit=50).get("results") or []:
+                params = {"search_type": "advanced", "tmdbid": tmdb_id, "group_results": 0, "limit": 50}
+                if not series:
+                    params["filter_cat"] = "1,2"
+                for t in api.call("browse", **params).get("results") or []:
                     found[t.get("torrentId")] = t
-            if not any(t.get("size") == src["size"] for t in found.values()):
+            if not tmdb_id or (not quick and not any(t.get("size") == src["size"] for t in found.values())):
                 for t in api.call("browse", searchstr=src["name"], group_results=0, limit=50).get("results") or []:
                     found[t.get("torrentId")] = t
     result = {**classify(src, list(found.values())), "tmdb_id": tmdb_id, "with_tmdb": bool(tmdb_id), "quick": quick}
@@ -2367,6 +2713,238 @@ def repost_check(src: dict, tmdb_id, quick: bool = False, refresh: bool = False)
     db_exec("INSERT OR REPLACE INTO repost_checks (hash, status, result, at) VALUES (?,?,?,?)",
             (src["hash"], result["status"], json.dumps(result), now))
     return {**result, "at": now}
+
+
+# ------------------------------------------------------------------ repost : analyse MediaInfo (règles HDF du fichier)
+# (format, codec) : (débit min kbps, CRF max, débit min animation, CRF max animation) — règles 4.3, 4.6
+MI_ENC = {("1080p", "x264"): (8000, 19, 7000, 21), ("1080p", "x265"): (4500, 20, 4500, 22),
+          ("1080p", "AV1"): (4000, 24, 4000, 24), ("2160p", "x265"): (18000, 18, 8000, 20),
+          ("2160p", "AV1"): (12000, 22, 12000, 22)}
+MI_MHD = {"x264": (3000, 23, 3000, 24), "x265": (3000, 22, 3000, 23)}  # règle 4.5 (1080p)
+MI_WEB = {("1080p", "AVC"): (3500, 2500), ("1080p", "HEVC"): (2500, 2500), ("1080p", "AV1"): (1800, 1800),
+          ("2160p", "HEVC"): (11000, 8000), ("2160p", "AV1"): (8000, 8000)}  # règle 5 : (min, min animation)
+MI_AUDIO_OK = {"TrueHD", "DTS-HD", "DTS", "EAC3", "AC3", "PCM", "FLAC", "AAC"}
+
+
+def _num(v):
+    try:
+        return float(str(v).split()[0])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+
+def mi_afmt(a: dict) -> str:
+    f, c, x = a.get("Format") or "", a.get("Format_Commercial_IfAny") or "", a.get("Format_AdditionalFeatures") or ""
+    if f.startswith("MLP") or "TrueHD" in c:
+        return "TrueHD"
+    if f == "DTS":
+        return "DTS-HD" if ("XLL" in x or "XBR" in x or "DTS-HD" in c or "DTS:X" in c) else "DTS"
+    return {"E-AC-3": "EAC3", "AC-3": "AC3", "MPEG Audio": "MP3"}.get(f, "WMA" if f.startswith("WMA") else f)
+
+
+def mi_analyze(tracks: list, kind: str, orig: str = "", anim: bool = False, team: str = "") -> dict:
+    """Conformité d'un MKV aux règles d'upload HDF vérifiables sur le fichier (critères de l'onglet Réglages).
+    checks : [{level: bad|warn|ok, text}]."""
+    R = hdf_rules()
+    ENC = {tuple(k.split()): v for k, v in R["enc"].items()}
+    WEB = {tuple(k.split()): v for k, v in R["web"].items()}
+    X, TR = R["x264"], R["transcode"]
+    vid = next((t for t in tracks if t.get("@type") == "Video"), {})
+    auds = [t for t in tracks if t.get("@type") == "Audio"]
+    subs = [t for t in tracks if t.get("@type") == "Text"]
+    chapters = any(t.get("@type") == "Menu" for t in tracks)
+    checks = []
+    say = lambda lvl, txt: checks.append({"level": lvl, "text": txt})  # noqa: E731
+    lang = lambda t: (t.get("Language") or "und").split("-")[0].lower()  # noqa: E731
+    forced = lambda s: s.get("Forced") == "Yes" or "forc" in (s.get("Title") or "").lower()  # noqa: E731
+    extra = lambda a: bool(re.search(r"comment|descri|\bAD\b", a.get("Title") or "", re.I))  # noqa: E731
+
+    # ---- vidéo
+    w, h = int(_num(vid.get("Width")) or 0), int(_num(vid.get("Height")) or 0)
+    res = "2160p" if w >= 3000 or h >= 1700 else "1080p" if w >= 1800 or h >= 1000 else "720p" if w >= 1200 or h >= 700 else "SD"
+    fmt = vid.get("Format") or ""
+    lib = (vid.get("Encoded_Library_Name") or vid.get("Encoded_Library") or "").lower()
+    st = {}
+    for kv in (vid.get("Encoded_Library_Settings") or "").split(" / "):
+        if "=" in kv:
+            k, v = kv.split("=", 1)
+            st[k.strip()] = v.strip()
+    enc = "x264" if "x264" in lib else "x265" if "x265" in lib else "AV1" if fmt == "AV1" else ""
+    shown = _num(vid.get("BitRate")) or _num(vid.get("BitRate_Nominal"))
+    kbps = shown / 1000 if shown else _num(st.get("bitrate"))
+    crf = _num(st.get("crf")) if st.get("rc", "crf") == "crf" else None
+    depth = int(_num(vid.get("BitDepth")) or 0)
+    desc = " ".join(x for x in (enc or fmt, res, f"{kbps:.0f} kbps" if kbps else "", f"CRF {crf:g}" if crf is not None else "") if x)
+    if not vid:
+        say("bad", "aucune piste vidéo")
+    elif not shown:
+        say("bad", "débit vidéo absent du MediaInfo : obligatoire (règle 1.8)")
+    if vid and res == "SD":
+        say("bad", f"définition SD ({w}x{h}) : HD seulement")
+    elif res == "720p" and kind in ("rip", "mhd", "webdl") and R["refuse_720p"]:
+        say("bad", f"720p ({w}x{h}) : interdit, sauf exception du staff si aucune source 1080p n'existe")
+
+    def meets(r):
+        if not r:
+            return None
+        mk, mc = (r[2], r[3]) if anim else (r[0], r[1])
+        return (crf is not None and crf <= mc) or (kbps is not None and kbps >= mk)
+
+    def need(r):
+        mk, mc = (r[2], r[3]) if anim else (r[0], r[1])
+        return f"{mk:g} kbps minimum ou CRF ≤ {mc:g}" + (" (animation)" if anim else "")
+
+    if kind in ("rip", "mhd") and vid:
+        if not enc:
+            say("warn", "encodeur et réglages absents du MediaInfo : conformité de l'encode invérifiable")
+        if enc == "x264":
+            for key, lab in (("subme", "subme"), ("me_range", "me-range"), ("bframes", "bframes"), ("ref", "ref")):
+                v = _num(st.get(key))
+                if v is not None and v < X[key]:
+                    say("bad", f"x264 {lab}={v:g} : {X[key]:g} minimum")
+            if st.get("rc") == "abr":
+                say("bad", "x264 en ABR 1 passe : interdit")
+            prof, lvl = vid.get("Format_Profile") or "", _num(vid.get("Format_Level"))
+            if prof and not prof.startswith("High"):
+                say("bad", f"profil {prof} : High obligatoire")
+            if lvl is not None and lvl < X["level"]:
+                say("warn", f"level {lvl:g} : {X['level']:g} minimum")
+        if enc == "x265" and st.get("rc") == "abr" and st.get("stats-read", "0") == "0":
+            say("bad", "x265 en ABR sans 2e passe (stats-read=0) : interdit")
+        if enc in R["ten_bits"] and depth and depth != 10:
+            say("bad", f"{enc} en {depth} bits : 10 bits obligatoire")
+        rule, mhd = ENC.get((res, enc)), (R["mhd"].get(enc) if res == "1080p" else None)
+        mhd_team = team.lower() in {t.lower() for t in R["mhd_teams"]}
+        if kind == "rip" and rule:
+            if meets(rule):
+                say("ok", f"débit d'encode conforme ({desc})")
+            elif meets(mhd):
+                say("ok" if mhd_team else "bad", f"débit de mHD ({desc}) : " + ("team mHD autorisée" if mhd_team else
+                    f"réservé aux teams {', '.join(R['mhd_teams'])} ; encode {res} : {need(rule)}"))
+            else:
+                say("bad", f"débit trop faible ({desc}) : {need(rule)}")
+        elif kind == "rip" and enc and res in ("1080p", "2160p"):
+            say("warn", f"{enc} en {res} : codec non prévu par les règles")
+        if kind == "mhd" and mhd:
+            say("ok" if meets(mhd) else "bad", f"débit mHD ({desc})" + ("" if meets(mhd) else f" : {need(mhd)}"))
+    if kind == "webdl" and vid:
+        r = WEB.get((res, fmt))
+        mk = (r[1] if anim else r[0]) if r else None
+        if mk and kbps and kbps < mk:
+            say("bad", f"débit vidéo {kbps:.0f} kbps : {mk:g} minimum pour un WEB-DL {res} {fmt}")
+        elif mk and kbps:
+            say("ok", f"débit WEB-DL conforme ({desc})")
+
+    # ---- audio
+    if not auds:
+        say("bad", "aucune piste audio")
+    allowed = set(R["audio_formats"])
+    for a in auds:
+        f, L = mi_afmt(a), lang(a)
+        abr, ch = (_num(a.get("BitRate")) or 0) / 1000, int(_num(a.get("Channels")) or 0)
+        if f not in allowed:
+            say("bad", f"audio {f} ({L}) : format non admis")
+        elif f == "AAC" and R["aac_only_web"] and kind != "webdl" and not extra(a):
+            say("bad", f"audio AAC ({L}) : réservé aux WEB-DL, commentaires et audiodescriptions")
+        wa = R["web_audio"].get(f)
+        if kind == "webdl" and abr and wa and abr < wa:
+            say("bad", f"audio {f} ({L}) à {abr:.0f} kbps : {wa:g} minimum")
+        if kind in ("rip", "mhd") and f in ("AC3", "EAC3") and abr and not extra(a):
+            mini = TR["7.1 EAC3"] if ch >= 8 and f == "EAC3" else TR["5.1"] if ch >= 6 else TR["par canal"] * max(ch, 1)
+            if abr < mini:
+                say("warn", f"{f} {ch} canaux ({L}) à {abr:.0f} kbps : {mini:g} minimum pour un transcodage "
+                            "(toléré si c'est l'AC3 d'origine du disque)")
+    main_auds = [a for a in auds if not extra(a)]
+    langs = {lang(a) for a in main_auds}
+    for L in sorted(langs):
+        fs = [mi_afmt(a) for a in main_auds if lang(a) == L]
+        if "DTS-HD" in fs and "DTS" in fs:
+            say("bad", f"core DTS en double d'une piste DTS-HD ({L}) : interdit")
+        if kind == "remux" and "TrueHD" in fs and "AC3" not in fs:
+            say("bad", f"TrueHD ({L}) sans son core AC3 : à conserver")
+    if auds and "fr" not in langs:
+        say("warn", "pas de VF : obligatoire, sauf VF inexistante, film muet, concert…")
+    if orig and orig != "fr":
+        if orig not in langs:
+            say("warn" if kind == "webdl" else "bad", f"VO ({orig}) absente des pistes audio")
+        full = [s for s in subs if lang(s) == "fr" and not forced(s)]
+        if not full:
+            say("bad", "VO non francophone sans sous-titres français complets")
+        elif kind == "remux" and not any((s.get("Format") or "") == "PGS" for s in full):
+            say("warn", "sous-titres français complets hors PGS : PGS attendu pour un remux")
+        if "fr" in langs and not any(lang(s) == "fr" and forced(s) for s in subs):
+            say("warn", "pas de sous-titres français forcés : obligatoires s'ils existent sur la source")
+    elif not orig:
+        say("warn", "langue originale inconnue (choisis l'œuvre TMDB) : VO et sous-titres non vérifiés")
+    others = sorted(langs - {"fr", orig, "und", ""} - {x.lower() for x in R["extra_langs"]})
+    if others:
+        say("warn", f"autres langues audio ({', '.join(others)}) : seulement si pertinentes")
+
+    # ---- sous-titres, chapitres
+    if any((s.get("Format") or "") == "VobSub" for s in subs):
+        say("bad", "sous-titres VobSub : interdits")
+    if R["chapters"] and not chapters and kind != "webdl":
+        say("bad", "chapitres absents : obligatoires (sauf WEB-DL)")
+
+    checks.sort(key=lambda c: {"bad": 0, "warn": 1, "ok": 2}[c["level"]])
+    verdict = "refused" if any(c["level"] == "bad" for c in checks) else "check" if any(c["level"] == "warn" for c in checks) else "ok"
+    tl = lambda t: f" — {t['Title']}" if t.get("Title") else ""  # noqa: E731
+    return {"verdict": verdict, "checks": checks, "summary": {
+        "video": " ".join(x for x in (fmt, f"({enc})" if enc and enc != fmt else "", f"{w}x{h}" if w else "",
+                                      f"{depth} bits" if depth else "") if x),
+        "res": res, "kbps": kbps, "crf": crf, "rc": st.get("rc"), "chapters": chapters,
+        "audio": [f"{lang(a)} {mi_afmt(a)} {a.get('Channels') or '?'} can. {round((_num(a.get('BitRate')) or 0) / 1000)} kbps{tl(a)}"
+                  for a in auds],
+        "subs": [f"{lang(s)} {s.get('Format') or ''}{' forcés' if forced(s) else ''}{tl(s)}" for s in subs]}}
+
+
+def tmdb_meta(tmdb_id, tv: bool = False) -> dict:
+    """Langue originale et genres TMDB (16 = animation) d'un film ou d'une série."""
+    out = {"original_language": "", "genres": []}
+    if not tmdb_id or not os.environ.get("TMDB_API_KEY", "").strip():
+        return out
+    try:
+        d = tmdb_get(f"/{'tv' if tv else 'movie'}/{int(tmdb_id)}", {})
+    except Exception:
+        return out
+    return {"original_language": d.get("original_language") or "", "genres": [g.get("id") for g in d.get("genres") or []]}
+
+
+def merge_mi(elig: str, why: list, mis: dict, hashes: list):
+    """Ajoute le verdict de l'analyse MediaInfo (s'il existe) à l'éligibilité déduite du nom."""
+    mi = next((mis[h] for h in hashes if h in mis), None)
+    if not mi:
+        return elig, why
+    rank = {"ok": 0, "check": 1, "refused": 2}
+    if rank.get(mi["verdict"], 0) > rank.get(elig, 0):
+        elig = mi["verdict"]
+    return elig, why + [f"MediaInfo : {c['text']}" for c in mi["checks"] if c["level"] in ("bad", "warn")]
+
+
+class AnalyzeSpec(BaseModel):
+    hashes: list[str]
+    kind: str = ""
+    tmdb_id: int | None = None
+
+
+@app.post("/api/repost/analyze")
+def api_repost_analyze(spec: AnalyzeSpec):
+    src = pick_source(qbt(), spec.hashes, spec.kind)
+    if src["disc"]:
+        raise HTTPException(422, "FULL Blu-ray : contenu intact, rien à analyser ici (BDInfo fait au moment du repost)")
+    f = Path(src["episodes"][0]) if src["season"] else Path(src["path"])
+    if not f.is_file():
+        raise HTTPException(404, f"Fichier introuvable dans le conteneur : {f}")
+    tracks = mediainfo(f)
+    if not tracks:
+        raise HTTPException(502, f"MediaInfo n'a rien lu dans {f.name}")
+    meta = tmdb_meta(spec.tmdb_id, src["season"] or is_series(src["stem"]))
+    team = src["stem"].rsplit("-", 1)[1].strip() if "-" in src["stem"] else ""
+    res = mi_analyze(tracks, src["kind"], meta["original_language"], 16 in meta["genres"], team)
+    res.update(file=f.name, episodes=len(src["episodes"]) or None, tmdb=bool(spec.tmdb_id), kind=src["kind"],
+               at=time.time(), text=mediainfo_text(f))
+    db_exec("INSERT OR REPLACE INTO repost_mi (hash, result, at) VALUES (?,?,?)", (src["hash"], json.dumps(res), res["at"]))
+    return res
 
 
 @app.post("/api/repost/check")
@@ -2458,12 +3036,10 @@ def api_repost_upload(spec: RepostSpec):
     if not chk:
         raise HTTPException(409, "Vérifie d'abord la release sur HDF")
     src = pick_source(q, spec.hashes, chk.get("kind") or "remux")  # la catégorie de la vérification fait foi
-    if is_series(src["stem"]):
-        raise HTTPException(422, "Les séries ne sont pas prises en charge dans cette version")
     kind = src["kind"]
     if kind not in REL_KINDS:
         raise HTTPException(422, "WEBRip : refusé sur HD-Forever" if kind == "webrip" else "Catégorie indéterminée")
-    path = Path(src["path"]).resolve()
+    path = Path(src["path"])
     if not any(within(path, r) for r in media_roots()) or not src["exists"]:
         raise HTTPException(400, f"Release introuvable dans le conteneur : {src['path']} (qbittorrent.path_map de config.yml ?)")
     st = chk["status"]
@@ -2477,19 +3053,19 @@ def api_repost_upload(spec: RepostSpec):
         raise HTTPException(409, f"Un {REL_KINDS[kind]} de même résolution est déjà sur HDF : confirme l'upload")
     if st not in ("absent", "allowed", "replaceable", "review"):
         raise HTTPException(409, "Revérifie la release sur HDF")
-    out = path
-    if kind == "remux" and src["clean"] != path.stem:  # nos remux : torrent sur un hardlink au nom nettoyé
-        link_dir = repost_cfg()["link_dir"]
-        if not any(within(link_dir, r) for r in media_roots()):
-            raise HTTPException(400, f"repost.link_dir ({link_dir}) doit être sous un dossier de qbittorrent.path_map")
-        try:
-            link_dir.mkdir(parents=True, exist_ok=True)
-        except OSError as e:
-            raise HTTPException(500, f"Impossible de créer {link_dir} ({e.strerror}) : "
-                                     f"sudo mkdir -p {link_dir} && sudo chown 1026:100 {link_dir}")
-        if os.stat(link_dir).st_dev != os.stat(path).st_dev:
-            raise HTTPException(400, f"{link_dir} n'est pas sur le même volume que le MKV : hardlink impossible")
-        out = link_dir / f"{src['clean']}.mkv"
+    out, extra = path, {}
+    if src["season"]:
+        # HDF : dans le torrent, seulement les épisodes et le .nfo d'origine (ni sample, ni sous-titres à part, ni bonus)
+        keep = list(src["episodes"]) + sorted(str(x) for x in path.iterdir() if x.is_file() and x.suffix.lower() == ".nfo")
+        kept = set(keep)
+        extras = [x for x in path.rglob("*") if x.is_file() and str(x) not in kept]
+        if extras or src["clean"] != path.name:
+            out = link_target(path) / src["clean"]
+            if out.exists() and not out.is_dir():
+                raise HTTPException(409, f"{out} existe déjà et n'est pas un dossier")
+        extra = {"season": True, "episodes": keep, "extras": len(extras)}
+    elif kind == "remux" and src["clean"] != path.stem:  # nos remux : torrent sur un hardlink au nom nettoyé
+        out = link_target(path) / f"{src['clean']}.mkv"
         if out.exists() and not os.path.samefile(out, path):
             raise HTTPException(409, f"{out} existe déjà et n'est pas ce fichier")
     ensure_free(out)
@@ -2499,7 +3075,7 @@ def api_repost_upload(spec: RepostSpec):
         raise HTTPException(409, f"Torrent déjà créé : utilise le job #{done[0]['id']} (bouton « Uploader sur… »)")
     spec.torrent.enabled = True
     payload = {**spec.model_dump(), "mkv": str(path), "qbt_path": src["qbt_path"], "source_hash": src["hash"],
-               "rel_kind": kind}
+               "rel_kind": kind, **extra}
     return {"id": enqueue("repost", rel_label(out), src["hash"], str(out), payload)}
 
 
@@ -2684,12 +3260,12 @@ HDF_VERSIONS = [  # (motif dans le nom, après l'année ; valeur de la case « V
 ]
 
 
-def tmdb_original_language(tmdb_id) -> str:
-    """Langue originale du film sur TMDB (« fr », « en »…), vide si inconnue."""
+def tmdb_original_language(tmdb_id, tv: bool = False) -> str:
+    """Langue originale du film (ou de la série) sur TMDB (« fr », « en »…), vide si inconnue."""
     if not tmdb_id or not os.environ.get("TMDB_API_KEY", "").strip():
         return ""
     try:
-        return tmdb_get(f"/movie/{int(tmdb_id)}", {}).get("original_language") or ""
+        return tmdb_get(f"/{'tv' if tv else 'movie'}/{int(tmdb_id)}", {}).get("original_language") or ""
     except Exception:
         return ""
 
@@ -2718,13 +3294,15 @@ def bdinfo_tracks(report: str) -> list:
 
 def hdf_info(mkv: Path, kind: str = "", report: str = "") -> dict:
     """Ce que le formulaire d'upload de HDF demande, déduit des pistes (MKV, ou rapport BDInfo d'un disque) et du nom."""
-    disc = mkv.is_dir() or mkv.suffix.lower() == ".iso"
+    season = season_dir(mkv)
+    disc = (mkv.is_dir() and not season) or mkv.suffix.lower() == ".iso"
     name = rel_label(mkv)
+    series = season or is_series(name)
     kind = kind or rel_kind(name, disc)
     m = re.search(r"[.\s](?:19|20)\d{2}[.\s](.*)$", name)
     tail = m.group(1) if m else name  # le titre du film n'entre pas dans la détection
     langs, srt, fr_unknown, foreign = set(), False, False, False
-    tracks = bdinfo_tracks(report) if disc else identify(mkv).get("tracks", [])
+    tracks = bdinfo_tracks(report) if disc else identify(first_episode(mkv) if season else mkv).get("tracks", [])
     for t in tracks:
         p = t.get("properties", {})
         lang, tname = p.get("language") or "und", p.get("track_name") or ""
@@ -2749,7 +3327,7 @@ def hdf_info(mkv: Path, kind: str = "", report: str = "") -> dict:
             langs.add("VFF")
     meta = release_meta(mkv)
     notes = []
-    orig = tmdb_original_language(meta["tmdb_id"]) if (fr_unknown or foreign) else ""
+    orig = tmdb_original_language(meta["tmdb_id"], series) if (fr_unknown or foreign) else ""
     if foreign and orig != "fr":
         langs.add("VO")
     if fr_unknown and not langs & {"VFF", "VFQ", "VFI", "VOF", "VOQ"}:
@@ -2773,7 +3351,7 @@ def hdf_info(mkv: Path, kind: str = "", report: str = "") -> dict:
     tfile = torrent_of(mkv)
     return {
         "name": name,
-        "tmdb_url": f"https://www.themoviedb.org/movie/{meta['tmdb_id']}" if meta["tmdb_id"] else None,
+        "tmdb_url": f"https://www.themoviedb.org/{'tv' if series else 'movie'}/{meta['tmdb_id']}" if meta["tmdb_id"] else None,
         "langs": [k for k in HDF_LANGS if k in langs], "srt": srt, "lang_note": " ".join(notes),
         "versions": [v for pat, v in HDF_VERSIONS if token(pat, tail)],
         "codec": codec,

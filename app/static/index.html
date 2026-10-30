@@ -155,12 +155,20 @@ dialog pre{font-family:var(--mono);font-size:.78rem;white-space:pre;overflow:aut
 .verdict{margin:.7rem 0 .4rem;font-weight:500}
 .verdict.ok{color:var(--ok)} .verdict.warn{color:var(--lamp)} .verdict.bad{color:var(--bad)}
 .rel-name{font-family:var(--mono);font-size:1rem;word-break:break-all;padding:.8rem 1rem;border-radius:8px;background:var(--ink);border:1px solid var(--line)}
+.set-f{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:.7rem}
+.set-f label{display:flex;flex-direction:column;gap:.2rem;font-size:.85rem;color:var(--muted)}
+.set-f label.set-b{flex-direction:row;align-items:center;gap:.5rem;color:var(--text);font-size:.95rem}
+#settings input.n{width:7rem}
+#settings .rrow label{flex:1;display:flex;min-width:12rem}
+#settings .rrow label input{width:100%}
+.set-t th,.set-t td{padding:.25rem .4rem}
+ul.mi{margin:.5rem 0;padding-left:1.2rem} ul.mi li.bad{color:var(--bad)} ul.mi li.warn{color:var(--lamp)} ul.mi li.ok{color:var(--ok)}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 </style>
 </head>
 <body>
 <header><h1>Postmuxarr</h1>
-  <nav class="tabs" aria-label="Mode"><button data-tab="remux" class="on">Remux</button><button data-tab="repost">Repost</button></nav>
+  <nav class="tabs" aria-label="Mode"><button data-tab="remux" class="on">Remux</button><button data-tab="repost">Repost</button><button data-tab="settings">Réglages</button></nav>
   <span class="free" id="free"></span></header>
 
 <div class="layout">
@@ -238,6 +246,14 @@ dialog pre{font-family:var(--mono);font-size:.78rem;white-space:pre;overflow:aut
   </section>
 </main>
 
+<main id="v-settings" hidden>
+  <section class="step">
+    <h2><span class="n">⚙</span>Réglages <span class="sub">tag des remux et critères des règles d'upload HDF</span></h2>
+    <div class="row" id="setbar" style="margin-bottom:.8rem"></div>
+    <div id="settings"><p class="muted">Chargement…</p></div>
+  </section>
+</main>
+
 <aside>
   <h2>Jobs</h2>
   <p class="hint">Ils tournent sur le NAS : tu peux fermer cette page.</p>
@@ -308,9 +324,10 @@ async function showReport(path) {
 
 /* ---------------------------------------------------------------- onglets */
 function showTab(t) {
-  $('#v-remux').hidden = t !== 'remux'; $('#v-repost').hidden = t !== 'repost';
+  $('#v-remux').hidden = t !== 'remux'; $('#v-repost').hidden = t !== 'repost'; $('#v-settings').hidden = t !== 'settings';
+  if (t === 'settings' && (!ST.rules || !ST.dirty)) loadSettings();
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === t));
-  history.replaceState(null, '', t === 'repost' ? '#repost' : location.pathname);
+  history.replaceState(null, '', t === 'remux' ? location.pathname : '#' + t);
   if (t === 'repost' && !R.started) { R.started = true; startRepost(); }
 }
 document.querySelector('.tabs').addEventListener('click', e => { const t = e.target.dataset.tab; if (t) showTab(t); });
@@ -638,9 +655,10 @@ function renderFields() {
   const opt = (k, list) => `<select data-f="${k}" class="${S.edited[k] ? 'edited' : ''}">${list.map(v => `<option value="${esc(v)}" ${v === S.f[k] ? 'selected' : ''}>${esc(v || '—')}</option>`).join('')}</select>`;
   const fields = KEYS.map(k => {
     const reset = S.edited[k] && k in S.auto ? `<button class="reset" data-reset="${k}">auto</button>` : '';
+    const deftag = k === 'group' ? '<button class="reset" data-deftag="1" title="Tag proposé pour les prochains remux">par défaut</button>' : '';
     const ctl = k === 'edition' ? opt(k, cfg.editions) : k === 'subs' ? opt(k, cfg.subs_tags)
       : `<input type="text" data-f="${k}" value="${esc(S.f[k])}" class="${S.edited[k] ? 'edited' : ''}">`;
-    return `<label class="${k === 'title' ? 'wide' : ''}"><span class="lab">${LABELS[k]} ${reset}</span>${ctl}</label>`;
+    return `<label class="${k === 'title' ? 'wide' : ''}"><span class="lab">${LABELS[k]} ${reset}${deftag}</span>${ctl}</label>`;
   }).join('');
   const resetLab = S.info && S.info.editable ? 'utiliser le nom généré' : 'rétablir';
   $('#fields').innerHTML = fields + `<label class="full"><span class="lab">Nom complet ${S.nameOverride != null ? `<button class="reset" data-reset="__name">${resetLab}</button>` : ''}</span>
@@ -659,7 +677,16 @@ $('#fields').addEventListener('input', e => {
     const full = $('[data-f="__name"]'); if (full && S.nameOverride == null) full.value = releaseName(); }
   renderRelease(); $('#cmd').hidden = true;
 });
-$('#fields').addEventListener('click', e => {
+$('#fields').addEventListener('click', async e => {
+  if (e.target.dataset.deftag) {
+    e.preventDefault();
+    const tag = (S.f.group || '').trim(); if (!tag) return toast('Tag vide.', true);
+    if (tag === cfg.group) return toast(`« ${tag} » est déjà le tag par défaut.`);
+    if (!confirm(`Utiliser « ${tag} » comme tag par défaut des prochains remux ?`)) return;
+    try { const r = await post('/api/settings/tag', {tag}); cfg.group = r.tag; toast(`Tag par défaut : ${r.tag}`); }
+    catch (err) { toast(err.message, true); }
+    return;
+  }
   const k = e.target.dataset.reset; if (!k) return; e.preventDefault();
   if (k === '__name') S.nameOverride = null; else { delete S.edited[k]; computeAuto(); }
   renderFields();
@@ -869,10 +896,13 @@ const RFIELDS = {
   category: {label: 'Catégorie qBittorrent', type: 'list'},
   kind: {label: 'Type', type: 'list'},
   rk: {label: 'Catégorie HDF', type: 'list'},
+  shape: {label: 'Contenu', type: 'list'},
+  elig: {label: 'Règles HDF', type: 'list'},
+  res: {label: 'Résolution', type: 'list'},
   hdf: {label: 'Statut HDF', type: 'list'},
   size: {label: 'Taille (Go)', type: 'num'},
 };
-const ROPS = {text: [['has', 'contient'], ['nhas', 'ne contient pas']], list: [['is', 'est'], ['isnt', "n'est pas"]],
+const ROPS = {text: [['has', 'contient'], ['nhas', 'ne contient pas'], ['any', 'contient un de'], ['nany', 'ne contient aucun de']], list: [['is', 'est'], ['isnt', "n'est pas"]],
   tracker: [['on', 'en seed sur'], ['off', 'pas en seed sur'], ['only', 'seulement sur']],
   num: [['gt', 'supérieure à'], ['lt', 'inférieure à']]};
 const HDF_LAB = {none: 'Non vérifié', absent: 'Pas de doublon', dupe: 'Doublon sur HDF', allowed: 'Doublon toléré',
@@ -882,7 +912,13 @@ const HDF_LAB = {none: 'Non vérifié', absent: 'Pas de doublon', dupe: 'Doublon
 // catégories HDF (clés de REL_KINDS côté serveur) ; webrip et « » ne sont pas repostables
 const RK_LAB = {original: 'Blu-ray Original', remux: 'Blu-ray Remux', rip: 'Blu-ray Rip', mhd: 'mHD', webdl: 'WEB-DL',
   webrip: 'WEBRip (refusé)', '': 'Indéterminée'};
-const KIND_LAB = {movie: 'Film (Radarr)', orphan: 'Hors *arr'};
+const SHAPE_LAB = {mkv: 'Film : un seul MKV', season: 'Saison complète (MKV)', disc: 'FULL Blu-ray (BDMV ou ISO)',
+  episode: 'Épisode seul', pack: 'Plusieurs saisons', other: 'Autre (archives, plusieurs films…)',
+  none: 'Inconnu (absent de qBittorrent)'};
+const ELIG_LAB = {ok: 'Conforme', check: 'À vérifier', refused: 'Refusée'};
+const RES_LAB = {'2160p': '2160p (4K, UHD)', '1080p': '1080p', '1080i': '1080i', '720p': '720p', none: 'Inconnue (SD…)'};
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const KIND_LAB = {movie: 'Film (Radarr)', episodes: 'Série (Sonarr)', orphan: 'Hors *arr'};
 // même règle que Nettoyarr : nom saisi dans sa config, sinon Prowlarr, sinon domaine sans sous-domaine ni extension
 function autoTracker(h) {
   if (!h || h === '?' || /^[\d.]+$/.test(h)) return h || '?';
@@ -891,13 +927,17 @@ function autoTracker(h) {
 }
 const trName = h => (R.inv && (R.inv.tracker_names[h] || R.inv.prowlarr_names[h])) || autoTracker(h);
 const hdfState = r => r.job && !['failed', 'cancelled', 'interrupted'].includes(r.job.status) ? 'job' : (r.hdf || 'none');
-const defaultRules = () => ({match: 'all', rules: [{f: 'rk', op: 'isnt', v: 'webrip'}, {f: 'rk', op: 'isnt', v: 'none'},
+// releases éligibles : pas refusées par les règles d'upload HDF (nom et contenu), pas déjà en seed sur HDF
+const defaultRules = () => ({match: 'all', rules: [{f: 'elig', op: 'isnt', v: 'refused'},
   ...(cfg.repost.hdf_host ? [{f: 'tracker', op: 'off', v: cfg.repost.hdf_host}] : [])]});
 
 function rOptions(f) {
   const rels = R.inv ? R.inv.releases : [];
   if (f === 'kind') return Object.entries(KIND_LAB);
   if (f === 'rk') return Object.entries(RK_LAB).map(([k, l]) => [k || 'none', l]);
+  if (f === 'shape') return Object.entries(SHAPE_LAB);
+  if (f === 'elig') return Object.entries(ELIG_LAB);
+  if (f === 'res') return Object.entries(RES_LAB);
   if (f === 'hdf') return Object.entries(HDF_LAB);
   if (f === 'category') return [...new Set(rels.flatMap(r => r.category))].sort().map(c => [c, c]);
   if (f === 'tracker') {  // un choix par tracker (nom) ; la valeur enregistrée est une de ses adresses
@@ -913,6 +953,12 @@ function testRule(r, x) {
   const def = RFIELDS[x.f]; if (!def || x.v === '' || x.v == null) return null;
   if (def.type === 'text') {
     const txt = x.f === 'title' ? r.title : [r.name, ...r.trackers.map(t => t.name)].join('\n');
+    if (x.op === 'any' || x.op === 'nany') {  // liste à virgules, mots entiers : « 4K » ne prend pas « 4KLight »
+      const terms = String(x.v).split(/[,;]/).map(s => s.trim()).filter(Boolean);
+      if (!terms.length) return null;
+      const found = terms.some(w => new RegExp('(?<![a-z0-9])' + reEsc(w) + '(?![a-z0-9])', 'i').test(txt));
+      return x.op === 'nany' ? !found : found;
+    }
     const hit = txt.toLowerCase().includes(String(x.v).toLowerCase());
     return x.op === 'nhas' ? !hit : hit;
   }
@@ -921,7 +967,8 @@ function testRule(r, x) {
     return x.op === 'gt' ? r.size / 1e9 > n : r.size / 1e9 < n;
   }
   const vals = x.f === 'tracker' ? r.trackers.map(t => trName(t.host)) : x.f === 'category' ? r.category
-    : x.f === 'kind' ? [r.kind] : x.f === 'rk' ? [r.rk || 'none'] : [hdfState(r)];
+    : x.f === 'kind' ? [r.kind] : x.f === 'rk' ? [r.rk || 'none'] : x.f === 'shape' ? [r.shape || 'none']
+    : x.f === 'res' ? [r.res || 'none'] : x.f === 'elig' ? [r.elig || 'check'] : [hdfState(r)];
   const want = x.f === 'tracker' ? trName(x.v) : x.v;
   if (x.op === 'only') return vals.length > 0 && vals.every(v => v === want);
   const hit = vals.includes(want);
@@ -938,7 +985,7 @@ function ruleRow(x, path) {
   const o = `<select data-ro="${path}" aria-label="Condition">${ROPS[type].map(([k, l]) => `<option value="${k}" ${k === x.op ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
   const v = type === 'list' || type === 'tracker'
     ? `<select data-rv="${path}" aria-label="Valeur"><option value="">—</option>${rOptions(x.f).map(([k, l]) => `<option value="${esc(k)}" ${k === x.v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`
-    : `<input type="text" data-rv="${path}" value="${esc(x.v)}" aria-label="Valeur"${type === 'num' ? ' inputmode="decimal" style="max-width:8rem"' : ''}>`;
+    : `<input type="text" data-rv="${path}" value="${esc(x.v)}" aria-label="Valeur"${type === 'num' ? ' inputmode="decimal" style="max-width:8rem"' : ''}${x.op === 'any' || x.op === 'nany' ? ' placeholder="séparés par des virgules : 1080p, 720p, 2160p, 4K"' : ''}>`;
   return `<div class="rrow">${f}${o}${v}<button class="btn small rdel" data-rdel="${path}" aria-label="Supprimer la règle">✕</button></div>`;
 }
 const matchSel = (node, path) => `<select data-rm="${path}" aria-label="Combinaison"><option value="all" ${node.match === 'all' ? 'selected' : ''}>toutes</option><option value="any" ${node.match === 'any' ? 'selected' : ''}>au moins une</option></select>`;
@@ -959,7 +1006,7 @@ $('#rules').addEventListener('change', e => {
   const d = e.target.dataset;
   if (d.rm !== undefined) { nodeAt(d.rm).match = e.target.value; return rulesChanged(false); }
   if (d.rf !== undefined) { const x = ruleAt(d.rf); x.f = e.target.value; x.op = ROPS[RFIELDS[x.f].type][0][0]; x.v = ''; return rulesChanged(true); }
-  if (d.ro !== undefined) { ruleAt(d.ro).op = e.target.value; return rulesChanged(false); }
+  if (d.ro !== undefined) { ruleAt(d.ro).op = e.target.value; return rulesChanged(true); }
   if (d.rv !== undefined && e.target.tagName === 'SELECT') { ruleAt(d.rv).v = e.target.value; return rulesChanged(false); }
 });
 $('#rules').addEventListener('input', e => {
@@ -1002,7 +1049,7 @@ function renderList() {
     <span class="muted">~10 s par film (API HDF) · résultats dans la colonne HDF, filtrables par « Statut HDF »</span>`;
   $('#rlist').innerHTML = list.length ? `<table><thead><tr><th>Release</th><th class="num">Taille</th><th>Trackers</th><th>HDF</th><th></th></tr></thead><tbody>
     ${list.map(r => { const st = hdfState(r);
-      return `<tr data-rel="${esc(r.id)}" class="${R.sel === r.id ? 'sel' : ''}"${masked(r) ? ' style="opacity:.5"' : ''}><td><b>${esc(r.title)}</b> <span class="hs">${esc(RK_LAB[r.rk || ''])}</span><small>${esc(r.name)}</small></td>
+      return `<tr data-rel="${esc(r.id)}" class="${R.sel === r.id ? 'sel' : ''}"${masked(r) ? ' style="opacity:.5"' : ''}><td><b>${esc(r.title)}</b> <span class="hs">${esc(RK_LAB[r.rk || ''])}</span>${r.res ? ` <span class="hs">${esc(r.res)}</span>` : ''}${r.shape && r.shape !== 'mkv' ? ` <span class="hs">${esc(SHAPE_LAB[r.shape] || r.shape)}</span>` : ''}${r.elig && r.elig !== 'ok' ? ` <span class="hs hs-${r.elig === 'refused' ? 'refused' : 'review'}" title="${esc((r.elig_why || []).join('\n'))}">${ELIG_LAB[r.elig]}</span>` : ''}<small>${esc(r.name)}</small></td>
         <td class="num">${gb(r.size)}</td><td>${esc([...new Set(r.trackers.map(t => trName(t.host)))].join(', '))}</td>
         <td><span class="hs hs-${st}">${HDF_LAB[st]}</span></td>
         <td><button class="btn small rdel" data-rmask="${esc(r.id)}">${r.masked ? 'Réafficher' : 'Masquer'}</button></td></tr>`; }).join('')}</tbody></table>`
@@ -1128,11 +1175,11 @@ function renderCheck(chk) {
 }
 function renderUpload() {
   const c = R.cur, st = c.check && c.check.status, job = c.job;
-  const what = c.disc_dir ? 'Le dossier du disque' : c.disc ? "L'ISO" : 'Le MKV';
+  const what = c.season ? 'Le dossier de la saison' : c.disc_dir ? 'Le dossier du disque' : c.disc ? "L'ISO" : 'Le MKV';
   let action;
   if (job && !['failed', 'cancelled', 'interrupted'].includes(job.status))
     action = `<p class="note">Repost déjà lancé : job #${job.id}. Une fois terminé, le bouton « Uploader sur… » du job ouvre HD-Forever.</p>`;
-  else if (c.series) action = '<p class="note warn">Les séries ne sont pas prises en charge dans cette version.</p>';
+  else if (c.shape === 'episode' || c.shape === 'pack') action = '<p class="note warn">HD-Forever n\'admet que des saisons complètes, une par torrent.</p>';
   else if (c.kind === 'webrip') action = '<p class="note warn">WEBRip : refusé sur HD-Forever.</p>';
   else if (!c.kinds[c.kind]) action = '<p class="note warn">Choisis d\'abord la catégorie de la release.</p>';
   else if (!c.exists) action = `<p class="note warn">${what} est introuvable dans le conteneur : vérifie <code>qbittorrent.path_map</code> dans config.yml.</p>`;
@@ -1147,7 +1194,7 @@ function renderUpload() {
       <div class="row" style="margin-top:.6rem">${pieceSelect('rt-piece')}
         <button class="btn primary" id="rgo">Créer le torrent pour HDF</button></div>
       ${st === 'replaceable' ? '<p class="note warn">Remplacement d\'un doublon mort : signale l\'ancien torrent sur HDF (« Merci de le signaler pour suppression ») après l\'upload.</p>' : ''}
-      <p class="note">Torrent créé sur ${c.disc_dir ? 'le dossier complet du disque' : c.disc ? "l'ISO" : 'le fichier'} existant, sans le modifier, puis seedé${cfg.repost.category ? ` (catégorie « ${esc(cfg.repost.category)} », gestion manuelle)` : ''}. ${c.disc ? 'Le BDInfo est lancé d\'abord (lecture complète du disque, plusieurs minutes)' : 'Le MediaInfo s\'affiche à la fin'} ; le bouton « Uploader sur… » du job remplit ensuite le formulaire de HDF.</p>`;
+      <p class="note">Torrent créé sur ${c.season ? 'le dossier de la saison (épisodes et .nfo seulement : dossier de hardlinks s\'il contient autre chose)' : c.disc_dir ? 'le dossier complet du disque' : c.disc ? "l'ISO" : 'le fichier'} existant, sans le modifier, puis seedé${cfg.repost.category ? ` (catégorie « ${esc(cfg.repost.category)} », gestion manuelle)` : ''}. ${c.disc ? 'Le BDInfo est lancé d\'abord (lecture complète du disque, plusieurs minutes)' : 'Le MediaInfo s\'affiche à la fin'} ; le bouton « Uploader sur… » du job remplit ensuite le formulaire de HDF.</p>`;
   $('#rup').innerHTML = `<h3>Upload</h3>${action}`;
 }
 function kindSelect(c) {
@@ -1157,24 +1204,44 @@ function kindSelect(c) {
     ${keys.map(k => `<option value="${k}" ${k === c.kind ? 'selected' : ''}>${esc(c.kinds[k])}</option>`).join('')}</select>
     ${c.kind !== c.kind_detected && c.kinds[c.kind] ? '<span class="muted">choisie à la main</span>' : ''}`;
 }
+const MI_VERDICT = {ok: ['ok', 'Conforme aux règles vérifiables sur le fichier'], check: ['warn', 'À vérifier'],
+  refused: ['bad', 'Non conforme aux règles HDF']};
+function renderMi(c) {
+  if (c.disc) return '<h3>Analyse MediaInfo</h3><p class="note">FULL Blu-ray : contenu intact, rien à analyser ici (le BDInfo est fait au moment du repost).</p>';
+  const m = c.mi;
+  let body = '';
+  if (m) {
+    const s = m.summary, [cls, lab] = MI_VERDICT[m.verdict] || ['', ''];
+    const at = new Date(m.at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'});
+    body = `<p class="verdict ${cls}">${lab}</p>
+      <ul class="mi">${m.checks.map(k => `<li class="${k.level}">${esc(k.text)}</li>`).join('')}</ul>
+      <p class="note">Vidéo : ${esc(s.video)} · ${s.kbps ? Math.round(s.kbps).toLocaleString('fr-FR') + ' kbps' : 'débit inconnu'}${s.crf != null ? ' · CRF ' + s.crf : ''}${s.rc ? ' · rc=' + esc(s.rc) : ''}<br>
+      Audio : ${s.audio.map(esc).join(' · ') || '—'}<br>Sous-titres : ${s.subs.map(esc).join(' · ') || '—'}<br>Chapitres : ${s.chapters ? 'oui' : 'non'}</p>
+      <p class="note">${esc(m.file)}${m.episodes ? ` (1er des ${m.episodes} épisodes)` : ''} · analysé le ${at} comme ${esc(c.kinds[m.kind] || m.kind)}${m.tmdb ? '' : ' · sans œuvre TMDB : VO non vérifiée'}${m.kind !== c.kind ? ' · catégorie changée depuis : réanalyse' : ''}</p>`;
+  }
+  return `<h3>Analyse MediaInfo</h3><div class="row"><button class="btn" id="rmigo">${m ? 'Réanalyser' : 'Analyser le fichier'}</button>
+    ${m && m.text ? '<button class="btn small" id="rmitxt">Voir le MediaInfo</button>' : ''}
+    <span class="muted" id="rmist">${m ? '' : 'débit, encodage, langues, sous-titres, chapitres'}</span></div>${body}`;
+}
 function renderDetail() {
   const c = R.cur;
   const opts = c.tmdb_results.map(t => `<option value="${t.id}" ${t.id === c.tmdb_id ? 'selected' : ''}>${esc(t.title)} (${esc(t.year || '?')})${t.original_title && t.original_title !== t.title ? ' · ' + esc(t.original_title) : ''}</option>`).join('');
   const inList = c.tmdb_results.some(t => t.id === c.tmdb_id);
   const at = c.check && c.check.at ? new Date(c.check.at * 1000).toLocaleString('fr-FR', {dateStyle: 'short', timeStyle: 'short'}) : '';
   const renamed = c.kind === 'remux' && c.clean !== c.stem;
-  const ext = c.disc_dir ? '' : c.disc ? '.iso' : '.mkv';
+  const ext = c.disc_dir || c.season ? '' : c.disc ? '.iso' : '.mkv';
   $('#rdetail').innerHTML = `<div class="rel-name">${esc(c.clean)}<span class="muted">${ext}</span></div>
-    <p class="note">${gb(c.size)} · ${c.folder && !c.disc ? 'release en dossier : seul le MKV sera uploadé · ' : ''}${c.disc_dir ? 'disque complet : tout le dossier sera uploadé · ' : ''}${esc(c.qbt_path)}</p>
+    <p class="note">${gb(c.size)} · ${c.folder && !c.disc && !c.season ? 'release en dossier : seul le MKV sera uploadé · ' : ''}${c.season ? `saison complète, ${c.episodes.length} épisode(s) · ` : ''}${c.disc_dir ? 'disque complet : tout le dossier sera uploadé · ' : ''}${esc(c.qbt_path)}</p>
     <div class="row" style="margin:.4rem 0">Catégorie HDF : ${kindSelect(c)}</div>
     ${renamed ? `<p class="note warn">Nom nettoyé (accents, apostrophes) : le torrent portera sur un hardlink renommé dans ${esc(cfg.repost.link_dir)}, le fichier d'origine garde son nom.</p>` : ''}
     ${c.kind !== 'remux' && c.kinds[c.kind] ? '<p class="note">Hors remux, la release garde son nom d\'origine.</p>' : ''}
-    ${c.series ? '<p class="note warn">Nom de série : non pris en charge dans cette version.</p>' : ''}
-    <div class="box" style="margin-top:1rem"><h3>Film TMDB</h3>
+    ${(c.elig_why || []).length ? `<p class="note${c.elig === 'refused' ? ' warn' : ''}">Règles HDF : ${esc(c.elig_why.join(' ; '))}</p>` : ''}
+    <div class="box" style="margin-top:1rem"><h3>${c.series ? 'Série' : 'Film'} TMDB</h3>
       <div class="row">${opts ? `<select id="rtm">${opts}<option value="" ${c.tmdb_id && !inList ? 'selected' : ''}>Autre (ID ci-contre)</option></select>` : ''}
         <input type="text" id="rtid" placeholder="ID TMDB" value="${c.tmdb_id || ''}" style="width:7rem" inputmode="numeric">
-        <span id="rtlink">${c.tmdb_id ? `<a class="lnk" href="https://www.themoviedb.org/movie/${c.tmdb_id}" target="_blank" rel="noopener">Fiche TMDB</a>` : ''}</span></div>
+        <span id="rtlink">${c.tmdb_id ? `<a class="lnk" href="https://www.themoviedb.org/${c.series ? 'tv' : 'movie'}/${c.tmdb_id}" target="_blank" rel="noopener">Fiche TMDB</a>` : ''}</span></div>
       ${cfg.tmdb ? '' : '<p class="note">Clé TMDB absente : saisis l\'ID à la main.</p>'}</div>
+    <div class="box" id="rmi">${renderMi(c)}</div>
     <div class="box"><h3>Sur HD-Forever</h3>
       ${!c.kinds[c.kind] ? '<p class="note">Vérification possible une fois la catégorie choisie (WEBRip exclu).</p>'
         : cfg.repost.hdf_api ? `<div class="row"><button class="btn" id="rchk">${c.check ? 'Revérifier' : 'Vérifier sur HDF'}</button>
@@ -1186,7 +1253,7 @@ function renderDetail() {
 }
 function setTmdb(id) {
   R.cur.tmdb_id = id || null;
-  $('#rtlink').innerHTML = id ? `<a class="lnk" href="https://www.themoviedb.org/movie/${id}" target="_blank" rel="noopener">Fiche TMDB</a>` : '';
+  $('#rtlink').innerHTML = id ? `<a class="lnk" href="https://www.themoviedb.org/${R.cur.series ? 'tv' : 'movie'}/${id}" target="_blank" rel="noopener">Fiche TMDB</a>` : '';
 }
 $('#rdetail').addEventListener('change', e => {
   if (e.target.id === 'rtm') { $('#rtid').value = e.target.value; setTmdb(+e.target.value || null); }
@@ -1199,6 +1266,19 @@ $('#rdetail').addEventListener('input', e => {
 $('#rdetail').addEventListener('click', async e => {
   const c = R.cur; if (!c) return;
   const b = e.target.closest('button'); if (!b) return;
+  if (b.id === 'rmitxt') return modal('MediaInfo', c.mi.text);
+  if (b.id === 'rmigo') {
+    b.disabled = true; $('#rmist').textContent = 'Lecture du fichier…';
+    try {
+      c.mi = await post('/api/repost/analyze', {hashes: c.rel.hashes, kind: c.kind, tmdb_id: c.tmdb_id});
+      const rank = {ok: 0, check: 1, refused: 2};
+      if ((rank[c.mi.verdict] || 0) > (rank[c.rel.elig] || 0)) c.rel.elig = c.mi.verdict;
+      c.rel.elig_why = [...(c.rel.elig_why || []).filter(x => !x.startsWith('MediaInfo : ')),
+        ...c.mi.checks.filter(k => k.level !== 'ok').map(k => 'MediaInfo : ' + k.text)];
+      $('#rmi').innerHTML = renderMi(c); renderList();
+    } catch (err) { b.disabled = false; $('#rmist').textContent = ''; toast(err.message, true); }
+    return;
+  }
   if (b.id === 'rchk') {
     b.disabled = true; $('#rchkst').textContent = 'Interrogation de HD-Forever…';
     try {
@@ -1224,12 +1304,100 @@ $('#rdetail').addEventListener('click', async e => {
     c.forceOk = true; return renderUpload();
   }
   if (b.id === 'rgo') {
+    if (!c.disc && !c.mi && !confirm('Fichier pas encore analysé (bouton « Analyser le fichier »). Créer le torrent quand même ?')) return;
+    if (c.mi && c.mi.verdict === 'refused' && !confirm('L\'analyse MediaInfo le juge non conforme aux règles HDF. Créer le torrent quand même ?')) return;
     b.disabled = true;
     const torrent = {enabled: true, trackers: [...document.querySelectorAll('[data-rtr]:checked')].map(x => x.dataset.rtr),
       piece_size: +$('#rt-piece').value || 0, format: (cfg.torrent || {}).format || 'v1'};
     const r = await launch('/api/repost/upload', {hashes: c.rel.hashes, tmdb_id: c.tmdb_id, torrent, force: !!c.forceOk}, 'Repost');
     if (r) { c.job = c.rel.job = {id: r.id, status: 'queued'}; renderUpload(); renderList(); } else b.disabled = false;
   }
+});
+
+/* ---------------------------------------------------------------- réglages */
+const ST = {rules: null, defaults: null, dirty: false};
+// f : [clé, type, libellé, aide] ; table : clé → colonnes ; map : clé → un nombre par sous-clé
+const SET_SECTIONS = [
+  {t: 'Remux', f: [['release_tag', 'text', 'Tag des releases (fin du nom : -TAG)', 'vide = group de config.yml']]},
+  {t: 'Doublons sur HD-Forever (règle 1.2)', f: [['exempt_team', 'text', 'Team dont les reposts restent permis malgré un doublon'],
+    ['size_tolerance', 'pct', 'Écart de taille (%) sous lequel deux remux ou FULL sont un doublon']]},
+  {t: 'Interdits dans le nom de la release (règles 3 et 5)', banned: true},
+  {t: 'Résolution et mHD (règles 4.4 et 4.5)', f: [['refuse_720p', 'bool', '720p refusé (encodes et WEB-DL)'],
+    ['mhd_teams', 'list', 'Teams autorisées à poster du mHD']]},
+  {t: 'Encodes : débit minimum, ou CRF maximum (règles 4.3 et 4.6)', table: 'enc',
+    cols: ['kbps min', 'CRF max', 'kbps min animation', 'CRF max animation']},
+  {t: 'mHD 1080p : débit minimum, ou CRF maximum (règle 4.5)', table: 'mhd',
+    cols: ['kbps min', 'CRF max', 'kbps min animation', 'CRF max animation']},
+  {t: 'WEB-DL : débit vidéo minimum (règle 5)', table: 'web', cols: ['kbps min', 'kbps min animation']},
+  {t: 'WEB-DL : débit audio minimum (kbps)', map: 'web_audio'},
+  {t: 'Encodes : débit minimum d\'un AC3/EAC3 transcodé (kbps)', map: 'transcode'},
+  {t: 'x264 : réglages minimum (règles 1.3 et 4.3)', map: 'x264'},
+  {t: 'Audio, sous-titres, chapitres', f: [['audio_formats', 'list', 'Formats audio admis'],
+    ['aac_only_web', 'bool', 'AAC réservé aux WEB-DL (et aux commentaires, audiodescriptions)'],
+    ['ten_bits', 'list', 'Codecs pour lesquels le 10 bits est obligatoire'],
+    ['chapters', 'bool', 'Chapitres obligatoires (sauf WEB-DL)'],
+    ['extra_langs', 'list', 'Langues audio admises sans alerte en plus de la VF et de la VO']]},
+];
+const getP = (o, p) => p.split('|').reduce((x, k) => x == null ? x : x[k], o);
+function setP(o, p, v) { const ks = p.split('|'), last = ks.pop(); ks.reduce((x, k) => x[k], o)[last] = v; }
+const showVal = (v, t) => t === 'list' ? (v || []).join(', ') : t === 'pct' ? (v == null ? '' : +(v * 100).toFixed(2)) : (v ?? '');
+function readVal(el) {
+  const t = el.dataset.t;
+  if (t === 'bool') return el.checked;
+  if (t === 'list') return el.value.split(',').map(s => s.trim()).filter(Boolean);
+  if (t === 'num' || t === 'pct') { const n = parseFloat(el.value.replace(',', '.')); return isNaN(n) ? null : t === 'pct' ? n / 100 : n; }
+  return el.value.trim();
+}
+function setInput(p, t, label, hint) {
+  const v = getP(ST.rules, p), d = getP(ST.defaults, p);
+  if (t === 'bool') return `<label class="set-b"><input type="checkbox" data-p="${esc(p)}" data-t="bool" ${v ? 'checked' : ''}> ${esc(label)}</label>`;
+  const num = t === 'num' || t === 'pct', ed = d !== undefined && JSON.stringify(v) !== JSON.stringify(d) ? ' edited' : '';
+  return `<label>${label ? `<span class="lab">${esc(label)}</span>` : ''}<input type="text" class="${num ? 'n' : ''}${ed}" data-p="${esc(p)}" data-t="${t}"
+    value="${esc(showVal(v, t))}" placeholder="${esc(hint || showVal(d, t))}"${num ? ' inputmode="decimal"' : ''}></label>`;
+}
+function renderSettings() {
+  const R = ST.rules;
+  $('#settings').innerHTML = SET_SECTIONS.map(s => {
+    let body = '';
+    if (s.f) body = `<div class="set-f">${s.f.map(([k, t, l, h]) => setInput(k, t, l, h)).join('')}</div>`;
+    if (s.banned) body = R.banned.map((b, i) => `<div class="rrow">${setInput(`banned|${i}|terms`, 'list', '', 'termes, séparés par des virgules')}
+        ${setInput(`banned|${i}|reason`, 'text', '', 'raison affichée')}<button class="btn small rdel" data-bdel="${i}" aria-label="Supprimer">✕</button></div>`).join('')
+      + '<div class="rtools"><button class="btn small" data-badd="1">+ Interdit</button></div><p class="note">Mots entiers, cherchés après l\'année, majuscules indifférentes.</p>';
+    if (s.table) body = `<div class="scroll"><table class="set-t"><thead><tr><th></th>${s.cols.map(c => `<th>${esc(c)}</th>`).join('')}</tr></thead><tbody>
+      ${Object.keys(R[s.table]).map(k => `<tr><td>${esc(k)}</td>${s.cols.map((_, i) => `<td>${setInput(`${s.table}|${k}|${i}`, 'num')}</td>`).join('')}</tr>`).join('')}</tbody></table></div>`;
+    if (s.map) body = `<div class="set-f">${Object.keys(R[s.map]).map(k => setInput(`${s.map}|${k}`, 'num', k)).join('')}</div>`;
+    return `<div class="box"><h3>${esc(s.t)}</h3>${body}</div>`;
+  }).join('');
+  renderSetBar();
+}
+function renderSetBar() {
+  $('#setbar').innerHTML = `<button class="btn primary" id="setsave" ${ST.dirty ? '' : 'disabled'}>Enregistrer</button>
+    <button class="btn" id="setreset">Critères par défaut</button>
+    <span class="muted">${ST.dirty ? 'Modifications non enregistrées' : 'Encadré ambre : différent de la valeur par défaut (règles HDF d\'octobre 2026)'}</span>`;
+}
+function applySettings(r) { ST.rules = r.rules; ST.defaults = r.defaults; ST.dirty = false; cfg.group = r.rules.release_tag || r.config_group; renderSettings(); }
+async function loadSettings() {
+  try { applySettings(await api('/api/rules')); } catch (e) { $('#settings').innerHTML = `<p class="error">${esc(e.message)}</p>`; }
+}
+function settingInput(e) { const p = e.target.dataset.p; if (!p) return; setP(ST.rules, p, readVal(e.target)); ST.dirty = true; renderSetBar(); }
+$('#settings').addEventListener('input', settingInput);
+$('#settings').addEventListener('change', settingInput);
+$('#settings').addEventListener('click', e => {
+  if (e.target.dataset.badd) { ST.rules.banned.push({terms: [], reason: ''}); ST.dirty = true; return renderSettings(); }
+  if (e.target.dataset.bdel !== undefined) { ST.rules.banned.splice(+e.target.dataset.bdel, 1); ST.dirty = true; renderSettings(); }
+});
+$('#setbar').addEventListener('click', async e => {
+  try {
+    if (e.target.id === 'setsave') {
+      applySettings(await api('/api/rules', {method: 'PUT', body: JSON.stringify(ST.rules)}));
+      toast('Réglages enregistrés. Les analyses MediaInfo déjà faites gardent leur verdict : réanalyse au besoin.');
+    } else if (e.target.id === 'setreset') {
+      if (!confirm('Revenir aux critères par défaut ? Le tag des remux est conservé.')) return;
+      applySettings(await api('/api/rules/reset', {method: 'POST'}));
+      toast('Critères par défaut rétablis.');
+    } else return;
+    if (R.inv) loadInventory();  // éligibilité de la liste du Repost recalculée
+  } catch (err) { toast(err.message, true); }
 });
 
 /* ---------------------------------------------------------------- jobs */
@@ -1364,7 +1532,7 @@ searchBox('#rq', v => { R.q = v; renderList(); });
   renderTorrentBox();
   try { S.hideDone = localStorage.getItem('pm.hideDone') !== '0'; } catch { S.hideDone = true; }
   browse(); refreshJobs();
-  if (location.hash === '#repost') showTab('repost');
+  if (['#repost', '#settings'].includes(location.hash)) showTab(location.hash.slice(1));
 })();
 </script>
 </body>
