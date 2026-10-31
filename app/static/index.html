@@ -20,6 +20,8 @@ button,input,select{font:inherit;color:inherit}
 :focus-visible{outline:2px solid var(--lamp);outline-offset:2px}
 header{display:flex;align-items:center;gap:1rem;padding:1.1rem 1.5rem;border-bottom:1px solid var(--line);flex-wrap:wrap}
 header h1{margin:0;font-size:1.25rem;font-weight:700;letter-spacing:-.01em}
+header .ver{margin-left:.45rem;color:var(--muted);font-size:.78rem;font-weight:500;text-decoration:none;letter-spacing:0}
+header .ver:hover{text-decoration:underline}
 header .free{color:var(--muted);font-size:.9rem;margin-left:auto}
 .tabs{display:flex;gap:.3rem}
 .tabs button{background:none;border:1px solid transparent;border-radius:7px;padding:.25rem .75rem;color:var(--muted);cursor:pointer}
@@ -187,7 +189,7 @@ aside h2{display:flex;justify-content:space-between;align-items:center}
 </style>
 </head>
 <body>
-<header><h1>Postmuxarr</h1>
+<header><h1>Postmuxarr<a class="ver" id="ver" target="_blank" rel="noopener"></a></h1>
   <nav class="tabs" aria-label="Mode"><button data-tab="remux" class="on">Remux</button><button data-tab="repost">Repost</button><button data-tab="settings">Réglages</button></nav>
   <span class="free" id="free"></span><button class="btn small" id="jobs-toggle" aria-pressed="true" title="Afficher ou masquer le panneau des jobs">Jobs</button></header>
 
@@ -1763,6 +1765,12 @@ searchBox('#rq', v => { R.q = v; renderList(); });
 /* ---------------------------------------------------------------- init */
 (async () => {
   try { cfg = await api('/api/config'); } catch (e) { return toast('Configuration illisible : ' + e.message, true); }
+  if (cfg.version) {
+    const v = $('#ver'), rel = /^\d+\.\d+\.\d+$/.test(cfg.version);
+    v.textContent = rel ? 'v' + cfg.version : cfg.version;
+    v.href = 'https://github.com/Gusdezup/postmuxarr/' + (rel ? 'releases/tag/v' + cfg.version : 'releases');
+    v.title = 'Notes de version';
+  }
   const chap = {fr: 'fre', en: 'eng'}[cfg.chapter_language] || cfg.chapter_language || 'fre';
   $('#o-chap').innerHTML = Object.keys(cfg.languages).filter(k => !['fra','deu','und'].includes(k))
     .map(k => `<option value="${k}" ${k === chap ? 'selected' : ''}>${esc(cfg.languages[k])}</option>`).join('');

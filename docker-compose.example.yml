@@ -3,8 +3,8 @@
 # restent acceptées en repli et peuvent être omises.
 services:
   postmuxarr:
-    build: ./postmuxarr
-    image: postmuxarr
+    image: ghcr.io/gusdezup/postmuxarr:0.1     # 0.1 = dernière 0.1.x ; « latest » = toujours la dernière version
+    # build: ./postmuxarr                      # à la place de image : construire depuis le dépôt cloné
     container_name: postmuxarr
     user: "1026:100"                      # utilisateur:groupe propriétaires des médias (id -u ; id -g)
     environment:
@@ -26,5 +26,5 @@ services:
     ports:
       - "8790:8790"
     labels:
-      - com.centurylinklabs.watchtower.enable=false   # image locale : Watchtower ne doit pas tenter de la tirer
+      - com.centurylinklabs.watchtower.enable=false   # mises à jour à la main, après lecture des notes de version
     restart: unless-stopped

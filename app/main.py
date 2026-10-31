@@ -64,6 +64,10 @@ EXTRACT_DIR = OUTPUT_DIR / ".extract"
 BDINFO_DIR = DATA_DIR / "bdinfo"
 REPOST_TORRENTS = DATA_DIR / "torrents"   # .torrent des reposts : jamais à côté des fichiers d'un autre seed
 APP_DIR = Path(__file__).parent
+try:  # numéro de version : app/VERSION, mis à jour par scripts/release.sh (le tag Git vX.Y.Z doit correspondre)
+    APP_VERSION = (APP_DIR / "VERSION").read_text(encoding="utf-8").strip() or "dev"
+except OSError:
+    APP_VERSION = "dev"
 DB_PATH = DATA_DIR / "jobs.db"
 LOG_LINES = 400
 BIG_FILE = 50 * 1024 * 1024               # en dessous : nfo, sample, srt…
@@ -71,7 +75,7 @@ TMDB_BASE = os.environ.get("TMDB_BASE", "https://api.themoviedb.org/3")
 # sans locale UTF-8, mkvmerge -J tronque sa sortie au premier caractère accentué
 ENV = {**os.environ, "LC_ALL": "C.UTF-8", "LANG": "C.UTF-8"}
 
-app = FastAPI(title="Postmuxarr")
+app = FastAPI(title="Postmuxarr", version=APP_VERSION)
 db_lock = threading.Lock()
 
 
@@ -929,9 +933,15 @@ def userscript(name: str, request: Request):
     return PlainTextResponse(js, media_type="text/javascript; charset=utf-8")
 
 
+@app.get("/api/version")
+def api_version():
+    return {"version": APP_VERSION}
+
+
 @app.get("/api/config")
 def api_config():
     cfg = load_config()
+    cfg["version"] = APP_VERSION
     tag = db_rows("SELECT value FROM settings WHERE key='release_tag'")
     if tag:
         cfg["group"] = tag[0]["value"]  # tag choisi dans l'interface, prioritaire sur config.yml

@@ -53,13 +53,15 @@ Les traitements longs sont des jobs côté serveur : le navigateur peut être fe
 
 ## Installation
 
-1. Copier ce dossier dans le dossier du stack (par exemple `stack/postmuxarr`).
-2. `cp config.example.yml config.yml`. Ce fichier n'est jamais versionné. Il garde les conventions de nommage et
-   l'URL d'annonce de chaque tracker (avec ta passkey) ; tout le reste se règle dans l'interface.
-3. Ajouter le service de `docker-compose.example.yml` au `docker-compose.yml` du stack, et adapter les chemins.
+L'image est publiée sur `ghcr.io/gusdezup/postmuxarr` (amd64) à chaque version.
+
+1. Dans le dossier du stack, créer un dossier `postmuxarr` et y copier `config.example.yml` sous le nom
+   `config.yml`. Ce fichier n'est jamais versionné. Il garde les conventions de nommage et l'URL d'annonce de chaque
+   tracker (avec ta passkey) ; tout le reste se règle dans l'interface.
+2. Ajouter le service de `docker-compose.example.yml` au `docker-compose.yml` du stack, et adapter les chemins.
    Les médias doivent être montés au même chemin que sur l'hôte, en un seul montage (hardlinks).
-4. `sudo docker compose up -d --build postmuxarr`, puis http://NAS:8790
-5. Onglet **Réglages** : connexion à qBittorrent (avec le bouton Tester, qui vérifie aussi la correspondance des
+3. `sudo docker compose up -d postmuxarr`, puis http://NAS:8790
+4. Onglet **Réglages** : connexion à qBittorrent (avec le bouton Tester, qui vérifie aussi la correspondance des
    chemins), clé TMDB, clé API HD-Forever, et Radarr et Sonarr si tu les utilises.
 
 ## Réglages
@@ -118,12 +120,23 @@ Si « Installer » n'ouvre pas la page d'installation du gestionnaire, ouvre le 
 main dans le gestionnaire. Postmuxarr reste en HTTP sur le réseau local : les requêtes passent par le gestionnaire,
 pas par la page du tracker, et ne sont donc pas bloquées comme contenu mixte.
 
-## Mises à jour
+## Versions et mises à jour
 
+Numérotation [SemVer](https://semver.org/lang/fr/), notes de chaque version dans les
+[Releases](https://github.com/Gusdezup/postmuxarr/releases) et dans `CHANGELOG.md`. La version en cours est affichée
+à côté du nom de l'app (lien vers ses notes). Tant que Postmuxarr est en 0.x, une version mineure (0.2.0…) peut
+demander une modification de `config.yml` ou du service Docker : ses notes le disent.
+
+Tags de l'image : `0.1.4` (version exacte), `0.1` (dernière 0.1.x), `latest` (dernière version).
+
+- Mise à jour, quand aucun job n'est en cours :
+  `sudo docker compose pull postmuxarr && sudo docker compose up -d postmuxarr`
+- Retour à une version précédente : la mettre dans `image:` (par exemple `ghcr.io/gusdezup/postmuxarr:0.1.3`), puis
+  la même commande.
 - `config.yml` modifié : rien à faire, il est relu à chaque utilisation (sauf `paths`, lu au démarrage :
   `sudo docker compose restart postmuxarr`).
-- `app/` modifié : `sudo docker compose up -d --build postmuxarr` (le Dockerfile copie `app/` dans l'image),
-  quand aucun job n'est en cours.
+- Construction depuis le dépôt (`build: ./postmuxarr` à la place de `image:`) : `git pull`, puis
+  `sudo docker compose up -d --build postmuxarr`.
 
 ## Structure
 
@@ -132,3 +145,5 @@ pas par la page du tracker, et ne sont donc pas bloquées comme contenu mixte.
 - `Dockerfile` : Python 3.12 Alpine + mkvtoolnix, mediainfo, 7-Zip, go-bdinfo
 - `config.example.yml` : modèle de configuration
 - `docker-compose.example.yml` : service à ajouter au stack
+- `CHANGELOG.md` : notes de version
+- `scripts/release.sh` : publication d'une version (tag, image, release)

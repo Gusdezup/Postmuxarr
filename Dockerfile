@@ -1,4 +1,6 @@
 FROM python:3.12-alpine
+LABEL org.opencontainers.image.source="https://github.com/Gusdezup/postmuxarr" \
+      org.opencontainers.image.description="Remux Blu-ray et repost de releases pour HD-Forever"
 ARG BDINFO_VERSION=0.4.2
 RUN apk add --no-cache mkvtoolnix mediainfo 7zip \
  && (command -v 7z || ln -s "$(command -v 7zz)" /usr/local/bin/7z) \
